@@ -18,6 +18,13 @@ requires-python = ">=3.11"
 # Lucille with it.
 dependencies = []
 
+# pytest only, and nothing else. The tests here are synthetic by rule — no DB, no
+# app, no committed roadmap/items/ — so a repo adopting this package can run its
+# proof of correctness without adopting anything from Lucille. That is checked in
+# CI by installing ONLY this package and running them.
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
