@@ -1,0 +1,32 @@
+[project]
+name = "roadmap-core"
+version = "0.1.0"
+description = "The roadmap work-item and arc graph: status derivation, validation, and markdown rendering. Stdlib-only, so any repo can adopt it without adopting a backend."
+requires-python = ">=3.11"
+# Intentionally dependency-free, and this is load-bearing rather than tidy.
+#
+# Two callers need this logic and neither may drag the other in: the Lucille
+# backend (which has a DB) and `scripts/roadmap.py` (which runs in any checkout
+# with no app dependencies, no DB and no network — that is what lets an agent
+# read the backlog offline). The script loads `roadmap_core/graph.py` BY PATH for
+# exactly that reason, which only keeps working while this stays importable with
+# nothing installed.
+#
+# It is also the extraction seam. The roadmap is being prepared to run as its own
+# product whose default store is a single SQLite file; a package that pulls in a
+# web framework or an ORM could not be adopted by another repo without adopting
+# Lucille with it.
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["roadmap_core*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
