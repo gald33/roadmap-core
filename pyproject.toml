@@ -23,6 +23,27 @@ dependencies = []
 # proof of correctness without adopting anything from Lucille. That is checked in
 # CI by installing ONLY this package and running them.
 [project.optional-dependencies]
+# Authoring an item IS writing `roadmap/items/<key>.yaml` — there is no
+# `roadmap.py new`, deliberately, because filing work belongs in a diff
+# somebody reviews. So the file paths need a YAML parser, and an adopter who
+# installs the bare package finds that out from `push` rather than from here:
+#
+#     PyYAML required for --source files (pip install pyyaml)
+#
+# Measured on 2026-08-18 by `tests/test_adoption.py` running in the isolation
+# job, after the same test passed locally on a machine that happened to have
+# PyYAML installed. An extra rather than a hard dependency because the top of
+# this file means what it says: the store, the graph and the impact rule stay
+# importable with nothing installed, which is what lets the backend and a bare
+# checkout both use them. `[files]` is what the CLI needs, not what the library
+# needs.
+#
+# Deliberately NOT in `dev`. `roadmap-core-tests.yml` asserts that `yaml` is
+# not importable in that job — the guard that keeps "this package stands alone"
+# from quietly becoming false. Putting PyYAML in `dev` to make one test pass
+# would have disabled that guard to do it, which is the trade it exists to
+# refuse. The adoption test runs in its own job with `[files]` installed.
+files = ["pyyaml>=6"]
 dev = ["pytest>=8"]
 
 [build-system]

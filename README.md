@@ -46,6 +46,53 @@ with LocalStore("roadmap/roadmap.db") as store:   # created if absent
 From the CLI, `--source local` on `push`, `claim`, `release` and `status`, or
 `ROADMAP_SOURCE=local` once. `ROADMAP_STORE` sets the path.
 
+## Adopting it in another project
+
+Measured end to end by `tests/test_adoption.py`, which runs the CLI as a
+subprocess against a scratch project with nothing on the path but this package
+— no backend, no FastAPI, no SQLAlchemy, no Postgres, no server, no token.
+
+```bash
+pip install "roadmap-core[files]"   # [files] adds PyYAML, which authoring needs
+mkdir -p scripts roadmap/items
+curl -o scripts/roadmap.py <this repo>/scripts/roadmap.py
+export ROADMAP_SOURCE=local
+```
+
+Then the ordinary loop, which needs nothing else:
+
+```bash
+cat > roadmap/items/first-thing.yaml <<'YAML'
+id: first-thing
+title: The first thing to do
+status: ready
+evidence: |
+  Why this is worth doing, and how you will know it worked.
+YAML
+
+python scripts/roadmap.py push            # files -> store
+python scripts/roadmap.py ready           # what is startable
+python scripts/roadmap.py claim first-thing
+python scripts/roadmap.py release first-thing
+```
+
+The store is one SQLite file at `roadmap/roadmap.db`. There is nothing to
+provision and no migration to run: it is created on first open.
+
+**Two things that are conventions rather than choices**, both found by doing
+this rather than by reading the code:
+
+- **The script has to live at `scripts/roadmap.py`.** `REPO_ROOT` is its
+  grandparent, so at the project root every path resolves one directory too
+  high and `push` reports *"no item files to push"* while looking at a
+  directory that is not yours — which reads exactly like an empty backlog.
+- **Authoring is writing a YAML file**, not calling an API. `push` is what
+  moves it into the store; there is no `roadmap.py new`. That is deliberate:
+  filing an item belongs in a diff somebody reviews.
+
+`ROADMAP_SOURCE=local` selects the SQLite store. Without it the CLI expects the
+API store, which is how Lucille runs it — see `roadmap_core.stores`.
+
 ## What is NOT here
 
 HTTP, auth, and the CLI. The graph is pure functions over plain dicts keyed by
