@@ -174,3 +174,120 @@ def test_the_cli_expects_to_live_in_scripts(project):
         cwd=project, env=env, capture_output=True, text=True, timeout=60,
     )
     assert "no item files to push" in misplaced.stdout + misplaced.stderr
+
+
+# --- the CI half of adopting it ----------------------------------------------
+#
+# The tests above prove an agent can run the loop by hand. A project also needs
+# CI, and the workflow Lucille runs is 333 lines of self-hosted runner, service
+# JWT, deploy-race wait and a bot committing back to `main` — machinery that
+# exists entirely because Lucille's store is served and its checkout cannot see
+# it. None of it applies to the SQLite floor.
+#
+# So `templates/roadmap.yml` is what an adopter copies, and these read the
+# commands out of that file and run them, rather than trusting that a YAML file
+# nobody executes still describes a working tool. A template that has drifted
+# from the CLI is worse than no template: it reads as tested.
+
+TEMPLATE = PACKAGE_ROOT / "templates" / "roadmap.yml"
+
+
+def _template_steps() -> list[list[str]]:
+    """The `scripts/roadmap.py` invocations the template runs, in order.
+
+    Read with a regex rather than a YAML parser on purpose — this package's
+    tests import nothing outside the stdlib, and the isolation job asserts that
+    `yaml` is not even importable.
+    """
+    import re
+
+    found = re.findall(r"run:\s*python (scripts/roadmap\.py[^\n]*)",
+                       TEMPLATE.read_text())
+    assert found, f"no roadmap.py steps found in {TEMPLATE}"
+    return [line.strip().split()[1:] for line in found]
+
+
+def test_the_template_is_a_workflow_github_would_accept():
+    """It lives outside `.github/workflows/`, so nothing else parses it. A
+    template that cannot be copied is worse than none — the adopter finds out
+    from a red run in their own repo, on their first day with the tool."""
+    yaml = pytest.importorskip("yaml")
+
+    doc = yaml.safe_load(TEMPLATE.read_text())
+    assert doc["name"]
+    assert True in doc or "on" in doc, "no trigger block"
+    steps = doc["jobs"]["roadmap"]["steps"]
+    assert any("checkout" in str(step.get("uses", "")) for step in steps)
+
+
+def test_the_template_declares_the_extra_authoring_needs():
+    """`push`, `validate` and `sync` all parse YAML. Installing the bare package
+    fails all three on the same import, which is how the first run of Lucille's
+    own sync workflow died — before the extra existed to name."""
+    assert 'pip install "roadmap-core[files]"' in TEMPLATE.read_text()
+
+
+def test_the_template_selects_the_store_that_needs_no_server():
+    """Without `ROADMAP_SOURCE=local` the CLI expects a served store and asks
+    for a credential an adopter has no way to mint."""
+    assert "ROADMAP_SOURCE: local" in TEMPLATE.read_text()
+
+
+def test_every_command_in_the_template_runs_green_on_a_clean_project(project):
+    """The template, executed. Each step in order, against a project whose
+    committed markdown is up to date — which is the state CI is asserting."""
+    # Stand in for the committed ROADMAP.md an adopter would have.
+    assert run(project, "push").returncode == 0
+    assert run(project, "sync").returncode == 0
+
+    for args in _template_steps():
+        result = run(project, *args)
+        assert result.returncode == 0, (
+            f"`roadmap.py {' '.join(args)}` failed in a clean project:\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+
+
+def test_the_template_goes_red_when_the_committed_markdown_is_stale(project):
+    """The check that earns the workflow, asserted by its effect rather than by
+    its presence. ROADMAP.md is generated but committed so an agent in a
+    checkout can read the backlog with no install and no network — and a
+    generated file nobody regenerates is a file that lies."""
+    run(project, "push")
+    run(project, "sync")
+
+    (project / "roadmap" / "items" / "second-thing.yaml").write_text(
+        "id: second-thing\ntitle: Filed without regenerating\nstatus: ready\n"
+    )
+    run(project, "push")
+
+    stale = run(project, "sync", "--check")
+    assert stale.returncode != 0, (
+        "a new item reached the store and never reached ROADMAP.md, and the "
+        f"check passed anyway:\n{stale.stdout}\n{stale.stderr}"
+    )
+
+
+def test_diff_reconciles_against_the_local_store_without_a_credential(project):
+    """`diff` is the assertion a sync workflow is built around, and until it
+    took `--source` it always reached for Lucille's admin API — so an adopter
+    with `ROADMAP_SOURCE=local` and no server was told to mint a JWT with a
+    skill that does not exist in their project."""
+    run(project, "push")
+
+    agree = run(project, "diff")
+    assert agree.returncode == 0, agree.stdout + agree.stderr
+    assert "LUCILLE_ADMIN_JWT" not in agree.stdout + agree.stderr
+
+    # And it still detects real drift rather than passing because it looked
+    # nowhere: an item in the store that no file mentions.
+    seeded = run(project, "pull")
+    assert seeded.returncode == 0, seeded.stderr
+    (project / "roadmap" / "items" / "first-thing.yaml").unlink()
+
+    drifted = run(project, "diff")
+    assert drifted.returncode == 1, (
+        "an item in the store with no file is invisible to every checkout, and "
+        f"diff reported agreement:\n{drifted.stdout}\n{drifted.stderr}"
+    )
+    assert "first-thing" in drifted.stdout + drifted.stderr

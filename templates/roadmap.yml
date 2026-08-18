@@ -1,0 +1,70 @@
+# The roadmap check, for a project that is not Lucille.
+#
+# Copy this to `.github/workflows/roadmap.yml`. It is the whole CI story for the
+# SQLite floor: two commands, no schedule, no credentials, no bot identity, no
+# commit back to the default branch, no self-hosted runner.
+#
+# WHY IT IS THIS SHORT. Lucille's own `roadmap-sync.yml` is 333 lines, and
+# almost none of that generalises. It exists to reconcile a *served* store — a
+# Postgres the checkout cannot reach — with the committed files: mint a
+# service-identity JWT, wait out a concurrent deploy, push, pull, regenerate,
+# commit the result back to `main`, and re-assert that the two agree. Every one
+# of those steps is a consequence of the store living somewhere a coding agent
+# cannot see.
+#
+# With `ROADMAP_SOURCE=local` the store is a SQLite file inside the checkout,
+# rebuilt from the committed YAML by `push` on first open. There is no second
+# copy to drift from, so there is nothing to reconcile on a clock and nothing to
+# commit back. Shipping a template of the 333 lines would hand an adopter the
+# machinery for a problem their deployment does not have — which is worse than
+# no template, because it reads as required.
+#
+# When you outgrow the floor, see "Upgrading to a served store" in
+# roadmap-core/README.md. That is where the schedule and the bot commit come
+# back, and why.
+
+name: Roadmap
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  roadmap:
+    runs-on: ubuntu-latest
+    env:
+      # Selects the SQLite store. Without it the CLI expects a served store and
+      # asks for a credential you do not have.
+      ROADMAP_SOURCE: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `[files]` adds PyYAML. Authoring an item IS writing a YAML file, so
+      # without the extra every command below fails on the same import — which
+      # is how the first run of Lucille's own sync workflow died.
+      - run: pip install "roadmap-core[files]"
+
+      # Files -> store. The store is not committed (it is derived, and a binary
+      # file in git conflicts on every claim), so each run builds it fresh from
+      # the YAML. That is the point of the floor: the files ARE the record.
+      - run: python scripts/roadmap.py push
+
+      # Schema, dangling dependencies, cycles.
+      - run: python scripts/roadmap.py validate
+
+      # And the committed markdown against the graph that generated it.
+      # `--check` exits 1 rather than rewriting, because CI must report a stale
+      # file, not quietly fix one in a container that is about to be discarded.
+      #
+      # This is the check that earns the workflow. `ROADMAP.md` is generated but
+      # committed, precisely so an agent in a checkout can read the backlog with
+      # no install and no network — and a generated file that nobody regenerates
+      # is a file that lies.
+      - run: python scripts/roadmap.py sync --check

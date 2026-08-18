@@ -53,6 +53,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["roadmap_core*"]
 
+# The CI template an adopter copies. Shipped in the sdist rather than left in
+# the repo, because the README tells them to copy it and a pip install is all
+# some adopters will ever have of this project.
+[tool.setuptools.data-files]
+"share/roadmap-core/templates" = ["templates/roadmap.yml"]
+
 [tool.ruff]
 line-length = 100
 

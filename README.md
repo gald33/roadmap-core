@@ -93,6 +93,52 @@ this rather than by reading the code:
 `ROADMAP_SOURCE=local` selects the SQLite store. Without it the CLI expects the
 API store, which is how Lucille runs it — see `roadmap_core.stores`.
 
+### CI
+
+Copy `templates/roadmap.yml` to `.github/workflows/roadmap.yml`. That is the
+whole CI story for the floor:
+
+```
+push      # files -> store, rebuilt fresh each run
+validate  # schema, dangling dependencies, cycles
+sync --check   # is the committed ROADMAP.md still what the graph renders?
+```
+
+No schedule, no credentials, no bot identity, no commit back to the default
+branch, no self-hosted runner. `tests/test_adoption.py` reads the commands out
+of that file and runs them, so a template that has drifted from the CLI fails
+rather than reading as tested.
+
+The third line is the one that earns the workflow. `ROADMAP.md` is generated but
+committed — that is what lets an agent read the backlog with no install and no
+network — and a generated file nobody regenerates is a file that lies.
+
+**Do not commit `roadmap/roadmap.db`.** It is derived: `push` rebuilds it from
+the YAML on first open, and a binary file in git conflicts on every claim. The
+files are the record; the store is the transaction that decides who gets one.
+
+### Upgrading to a served store
+
+The floor's simplicity comes from one property: the store is inside the
+checkout, so there is no second copy to drift from. Move the store to a server —
+so that claims are visible across machines the moment they are taken, rather
+than when a branch merges — and four things come back, none of which the
+template can supply for you:
+
+| What returns | Why |
+|---|---|
+| A **credential** step | the store is now behind auth, and the CLI needs a token per run |
+| A **wait-for-reachable** step | a concurrent deploy can hold the store down, and being early is not being wrong |
+| `pull` and a **bot commit** | the store now knows things no checkout does, and they have to land in the files an agent reads |
+| A **schedule** | finishing an item is usually a code change somewhere else entirely, so no path filter can catch it — only re-asking on a clock can |
+
+`ApiStore` is constructed with your own caller, so the auth stays yours (see the
+table under [Storage](#storage)). Lucille's `.github/workflows/roadmap-sync.yml`
+is the worked example of all four, and the reason it is not shipped as a
+template: almost every line of it is a consequence of Lucille's own deployment,
+and handing an adopter that machinery for a problem they do not have reads as
+required rather than as one option.
+
 ## What is NOT here
 
 HTTP, auth, and the CLI. The graph is pure functions over plain dicts keyed by
