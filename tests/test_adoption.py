@@ -30,7 +30,6 @@ empty backlog for an afternoon.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -50,7 +49,6 @@ pytest.importorskip(
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-CLI = PACKAGE_ROOT.parent / "scripts" / "roadmap.py"
 
 ITEM = """\
 id: first-thing
@@ -63,18 +61,21 @@ evidence: |
 
 @pytest.fixture
 def project(tmp_path):
-    """A fresh project: the documented layout, and nothing else."""
-    if not CLI.exists():  # pragma: no cover - only outside this repo
-        pytest.skip("scripts/roadmap.py is not beside this package")
+    """A fresh project: the documented layout, and nothing else.
+
+    No `scripts/` and nothing copied into it. The CLI used to be a file an
+    adopter fetched out of Lucille, which this fixture faked by copying it off
+    the local disk — so the test proved the tool worked *with Lucille present*,
+    which is the one condition an adoption test must not assume. Lucille is a
+    private repository; nobody outside it could run that `curl`.
+    """
     root = tmp_path / "myproject"
-    (root / "scripts").mkdir(parents=True)
     (root / "roadmap" / "items").mkdir(parents=True)
-    shutil.copy(CLI, root / "scripts" / "roadmap.py")
     (root / "roadmap" / "items" / "first-thing.yaml").write_text(ITEM)
     return root
 
 
-def run(project: Path, *args: str) -> subprocess.CompletedProcess:
+def run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     """The CLI, with ONLY this package importable.
 
     A bare PYTHONPATH rather than the ambient environment: inheriting site
@@ -91,8 +92,8 @@ def run(project: Path, *args: str) -> subprocess.CompletedProcess:
     # test above reads the import graph instead of trusting this environment —
     # a stray install here once turned a missing dependency into a green run.
     return subprocess.run(
-        [sys.executable, "scripts/roadmap.py", *args],
-        cwd=project, env=env, capture_output=True, text=True, timeout=60,
+        [sys.executable, "-m", "roadmap_core.cli", *args],
+        cwd=cwd, env=env, capture_output=True, text=True, timeout=60,
     )
 
 
@@ -145,7 +146,7 @@ def test_the_cli_never_reaches_for_the_backend(project):
     """
     import ast
 
-    tree = ast.parse((project / "scripts" / "roadmap.py").read_text())
+    tree = ast.parse((PACKAGE_ROOT / "roadmap_core" / "cli.py").read_text())
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -157,23 +158,43 @@ def test_the_cli_never_reaches_for_the_backend(project):
         assert banned not in imported, f"the CLI imports {banned!r}"
 
 
-def test_the_cli_expects_to_live_in_scripts(project):
-    """A convention, asserted so it is documented rather than discovered.
+def test_the_root_is_found_from_a_subdirectory(project):
+    """It used to be the script's grandparent, so the script had to live at
+    `<project>/scripts/roadmap.py` and you found that out by having an empty
+    backlog for an afternoon. Now the file is in site-packages, so the root has
+    to be discovered — and being run from a subdirectory is ordinary."""
+    deep = project / "src" / "inner"
+    deep.mkdir(parents=True)
+    assert run(project, "push").returncode == 0
 
-    `REPO_ROOT` is the script's grandparent. Put the script at the project root
-    and every path resolves one directory too high — `push` then reports "no
-    item files to push" while looking somewhere that is not your project, which
-    reads exactly like an empty backlog.
-    """
-    shutil.copy(project / "scripts" / "roadmap.py", project / "roadmap.py")
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(PACKAGE_ROOT)
-    env["ROADMAP_SOURCE"] = "local"
-    misplaced = subprocess.run(
-        [sys.executable, "roadmap.py", "push"],
-        cwd=project, env=env, capture_output=True, text=True, timeout=60,
+    from_below = run(deep, "ready")
+    assert "first-thing" in from_below.stdout, (
+        f"run from a subdirectory it read an empty backlog:\n"
+        f"{from_below.stdout}\n{from_below.stderr}"
     )
-    assert "no item files to push" in misplaced.stdout + misplaced.stderr
+
+
+def test_a_subdirectory_run_does_not_mint_a_second_store(project):
+    """The nastiest version of the same bug, and the reason discovery keys on
+    `roadmap/items` rather than on `roadmap/`.
+
+    The store defaulted to a WORKING-DIRECTORY-relative `roadmap/roadmap.db`,
+    so a command run one directory down created its own database there — and
+    then that directory contained a `roadmap/`, so every later command resolved
+    the root to it. Two stores in one checkout means two agents can hold the
+    same item, and the transaction that exists to arbitrate never sees the
+    other one.
+    """
+    deep = project / "src" / "inner"
+    deep.mkdir(parents=True)
+    assert run(project, "push").returncode == 0
+    assert run(deep, "claim", "first-thing").returncode == 0
+
+    strays = [p for p in project.rglob("*.db") if p.parent.parent != project]
+    assert not strays, f"a second store was created away from the root: {strays}"
+    assert (project / "roadmap" / "roadmap.db").exists(), "the real store is unused"
+
+
 
 
 # --- the CI half of adopting it ----------------------------------------------
@@ -193,7 +214,7 @@ TEMPLATE = PACKAGE_ROOT / "templates" / "roadmap.yml"
 
 
 def _template_steps() -> list[list[str]]:
-    """The `scripts/roadmap.py` invocations the template runs, in order.
+    """The `roadmap` invocations the template runs, in order.
 
     Read with a regex rather than a YAML parser on purpose — this package's
     tests import nothing outside the stdlib, and the isolation job asserts that
@@ -201,10 +222,9 @@ def _template_steps() -> list[list[str]]:
     """
     import re
 
-    found = re.findall(r"run:\s*python (scripts/roadmap\.py[^\n]*)",
-                       TEMPLATE.read_text())
-    assert found, f"no roadmap.py steps found in {TEMPLATE}"
-    return [line.strip().split()[1:] for line in found]
+    found = re.findall(r"run:\s*roadmap ([^\n]*)", TEMPLATE.read_text())
+    assert found, f"no `roadmap` steps found in {TEMPLATE}"
+    return [line.strip().split() for line in found]
 
 
 def test_the_template_is_a_workflow_github_would_accept():

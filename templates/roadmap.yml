@@ -49,15 +49,17 @@ jobs:
       # `[files]` adds PyYAML. Authoring an item IS writing a YAML file, so
       # without the extra every command below fails on the same import — which
       # is how the first run of Lucille's own sync workflow died.
+      # This also puts the `roadmap` console script on PATH. There is no
+      # script to vendor into your repo and no file to keep in sync.
       - run: pip install "roadmap-core[files]"
 
       # Files -> store. The store is not committed (it is derived, and a binary
       # file in git conflicts on every claim), so each run builds it fresh from
       # the YAML. That is the point of the floor: the files ARE the record.
-      - run: python scripts/roadmap.py push
+      - run: roadmap push
 
       # Schema, dangling dependencies, cycles.
-      - run: python scripts/roadmap.py validate
+      - run: roadmap validate
 
       # And the committed markdown against the graph that generated it.
       # `--check` exits 1 rather than rewriting, because CI must report a stale
@@ -67,4 +69,4 @@ jobs:
       # committed, precisely so an agent in a checkout can read the backlog with
       # no install and no network — and a generated file that nobody regenerates
       # is a file that lies.
-      - run: python scripts/roadmap.py sync --check
+      - run: roadmap sync --check

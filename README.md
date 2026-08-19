@@ -54,10 +54,14 @@ subprocess against a scratch project with nothing on the path but this package
 
 ```bash
 pip install "roadmap-core[files]"   # [files] adds PyYAML, which authoring needs
-mkdir -p scripts roadmap/items
-curl -o scripts/roadmap.py <this repo>/scripts/roadmap.py
+mkdir -p roadmap/items
 export ROADMAP_SOURCE=local
 ```
+
+That is the whole install. `roadmap` is a console script that comes with the
+package — there is nothing to copy. (It used to say `curl -o scripts/roadmap.py
+<this repo>/scripts/roadmap.py`, and this repo is private, so the package was
+installable, importable and useless to anyone outside it.)
 
 Then the ordinary loop, which needs nothing else:
 
@@ -70,10 +74,10 @@ evidence: |
   Why this is worth doing, and how you will know it worked.
 YAML
 
-python scripts/roadmap.py push            # files -> store
-python scripts/roadmap.py ready           # what is startable
-python scripts/roadmap.py claim first-thing
-python scripts/roadmap.py release first-thing
+roadmap push            # files -> store
+roadmap ready           # what is startable
+roadmap claim first-thing
+roadmap release first-thing
 ```
 
 The store is one SQLite file at `roadmap/roadmap.db`. There is nothing to
@@ -82,12 +86,14 @@ provision and no migration to run: it is created on first open.
 **Two things that are conventions rather than choices**, both found by doing
 this rather than by reading the code:
 
-- **The script has to live at `scripts/roadmap.py`.** `REPO_ROOT` is its
-  grandparent, so at the project root every path resolves one directory too
-  high and `push` reports *"no item files to push"* while looking at a
-  directory that is not yours — which reads exactly like an empty backlog.
+- **Your project root is the nearest ancestor holding `roadmap/items` or
+  `.git`**, so the commands work from anywhere inside it. Set
+  `ROADMAP_REPO_ROOT` to pin it. Deliberately not bare `roadmap/`: that is a
+  directory the tool *creates*, so keying on it let one command run in the
+  wrong place mint the marker that made that place look like a project
+  forever after.
 - **Authoring is writing a YAML file**, not calling an API. `push` is what
-  moves it into the store; there is no `roadmap.py new`. That is deliberate:
+  moves it into the store; there is no `roadmap new`. That is deliberate:
   filing an item belongs in a diff somebody reviews.
 
 `ROADMAP_SOURCE=local` selects the SQLite store. Without it the CLI expects the
