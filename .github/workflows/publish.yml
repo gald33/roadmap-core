@@ -1,0 +1,116 @@
+name: Publish to PyPI
+
+# Trusted Publishing (OIDC): no API token is stored in this repo or in Actions
+# secrets. The trust relationship — this repo + this workflow filename + the
+# `pypi` environment — is configured once on PyPI:
+# https://pypi.org/manage/project/roadmap-core/settings/publishing/
+#
+# 0.1.0 was uploaded by API token from Lucille, where this package used to live,
+# because Trusted Publishing needs a publisher configured before a project's
+# first upload and an API token cannot configure one. That upload created the
+# project; everything from here goes through this workflow.
+#
+# To cut a release: bump `version` in pyproject.toml, merge, then tag `vX.Y.Z`
+# and publish a GitHub Release for it. The tag must agree with the version in
+# pyproject.toml; the build job checks and refuses otherwise, because PyPI never
+# lets a version be reused and a wrong one cannot be taken back.
+
+on:
+  release:
+    types: [published]
+  # Manual retry. `release: published` fires exactly once, so a run lost to an
+  # Actions outage would otherwise leave that tag unpublishable short of
+  # deleting and recreating the release:
+  #   gh workflow run publish.yml --ref vX.Y.Z
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # A dispatch can name any ref, including a branch. Publishing an
+      # in-progress `main` as if it were a release would be silent and
+      # permanent, so require a tag and require it to agree with what is built.
+      - name: Refuse to publish anything but a matching version tag
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::refusing to publish from $GITHUB_REF_TYPE '$GITHUB_REF_NAME'"
+            echo "::error::— dispatch against a vX.Y.Z tag instead"
+            exit 1
+          fi
+          declared="$(python -c '
+          import tomllib, pathlib
+          print(tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text())["project"]["version"])
+          ')"
+          if [ "$GITHUB_REF_NAME" != "v$declared" ]; then
+            echo "::error::tag '$GITHUB_REF_NAME' does not match version '$declared'"
+            echo "::error::in pyproject.toml. Bump one or retag the other."
+            exit 1
+          fi
+          echo "publishing roadmap-core $declared"
+
+      # The package claims to stand alone; a wheel built with anything else
+      # resolvable would not prove it. Nothing is installed here but `build`.
+      - name: Build the wheel and the sdist
+        run: |
+          pip install build
+          python -m build --outdir dist .
+
+      # What ships has to work when it is the only thing installed. The exact
+      # failure this was written for was a package whose CLI could not be
+      # obtained at all, because it lived in a private repo.
+      - name: The wheel, installed the way an adopter installs it
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/adopter
+          /tmp/adopter/bin/pip install --quiet "$(ls dist/*.whl)[files]"
+          mkdir -p /tmp/project/roadmap/items
+          cat > /tmp/project/roadmap/items/first-thing.yaml <<'ITEM'
+          id: first-thing
+          title: A thing to do
+          status: ready
+          # `validate` requires this on every item (graph.py, rule 2). Without it
+          # this step fails here rather than at the thing it exists to check.
+          evidence: Synthetic item for the adoption smoke test.
+          ITEM
+          cd /tmp/project
+          export ROADMAP_SOURCE=local
+          /tmp/adopter/bin/roadmap push
+          /tmp/adopter/bin/roadmap ready | grep -q first-thing
+          /tmp/adopter/bin/roadmap validate
+          /tmp/adopter/bin/roadmap sync
+          test -f roadmap/ROADMAP.md
+          # And nothing came along for the ride.
+          /tmp/adopter/bin/python - <<'PY'
+          import importlib.util as u
+          leaked = [m for m in ("app", "fastapi", "sqlalchemy", "alembic") if u.find_spec(m)]
+          assert not leaked, f"the wheel pulled a backend in: {leaked}"
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roadmap-core-dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC, which is what stands in for a stored token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: roadmap-core-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

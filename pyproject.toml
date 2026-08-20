@@ -65,7 +65,7 @@ dev = ["pytest>=8"]
 roadmap = "roadmap_core.cli:main"
 
 [project.urls]
-Source = "https://github.com/gald33/lucille/tree/main/roadmap-core"
+Source = "https://github.com/gald33/roadmap-core"
 
 [build-system]
 requires = ["setuptools>=68"]
