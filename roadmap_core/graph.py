@@ -20,6 +20,24 @@ from typing import Any
 
 STATUSES = ("ready", "deferred", "blocked", "claimed", "verifying", "done")
 
+#: How the generated markdown tells a reader to re-run this tool.
+#:
+#: The name of the console script this package installs, and DELIBERATELY A
+#: CONSTANT rather than anything derived from ``sys.argv`` or the environment.
+#: ``ROADMAP.md`` and ``ARCS.md`` are generated, committed, and compared
+#: byte-for-byte by ``sync --check``, so a header that varied with how the
+#: command happened to be invoked would make the file disagree with itself
+#: between two developers and flip back and forth on every run — the same
+#: failure the no-clock, no-graph-wide-total rule in ``render_markdown`` exists
+#: to prevent, arriving through the environment instead of through time.
+#:
+#: It used to read ``python scripts/roadmap.py``, which is the shim in the
+#: repository this package was extracted from and exists in no other checkout.
+#: Every adopter's generated files therefore opened by naming a file they do not
+#: have — in the one artifact written specifically for a reader with nothing
+#: installed, who has no way to discover the real command.
+CLI = "roadmap"
+
 #: ``tickets`` entries are ``feedback_tickets.id`` values. Matched here rather
 #: than parsed with ``uuid.UUID`` because this module is stdlib-only *and*
 #: import-light on purpose — ``scripts/roadmap.py`` loads it by path with no app
@@ -606,7 +624,7 @@ def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
     add("")
     add(
         "<!-- GENERATED FILE — DO NOT EDIT BY HAND. "
-        "Regenerate with `python scripts/roadmap.py sync`. -->"
+        f"Regenerate with `{CLI} sync`. -->"
     )
     add("")
     add(
@@ -649,7 +667,7 @@ def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
     if not ready:
         add("_Nothing ready: everything is claimed, blocked, or done._")
     else:
-        add("Claim before starting: `python scripts/roadmap.py claim <key>`")
+        add(f"Claim before starting: `{CLI} claim <key>`")
         add("")
         add(
             "**In priority order, most important first.** An item with no marker "
@@ -724,7 +742,7 @@ def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
             f"leaves its hold behind forever and the item silently stops being offered "
             f"to anyone. If **since** is more than {STALE_CLAIM_DAYS} days ago, check "
             f"whether that branch still has work in flight before assuming the hold is "
-            f"live — if it is merged or gone, `python scripts/roadmap.py release <key>`."
+            f"live — if it is merged or gone, `{CLI} release <key>`."
         )
     add("")
 
@@ -1128,7 +1146,7 @@ def render_arcs_markdown(
     add("")
     add(
         "<!-- GENERATED FILE — DO NOT EDIT BY HAND. "
-        "Regenerate with `python scripts/roadmap.py sync`. "
+        f"Regenerate with `{CLI} sync`. "
         "Edit roadmap/arcs/*.yaml instead. -->"
     )
     add("")
@@ -1140,19 +1158,6 @@ def render_arcs_markdown(
         "last regenerated ask git — `git log -1 --format=%cI -- ARCS.md` — "
         "because nothing here derives from the clock or from a graph-wide total, "
         "so two branches editing different arcs merge cleanly."
-    )
-    add("")
-    add(
-        "**Three things that used to live here are not arcs** and moved out when "
-        "this file became generated: the flag ledger "
-        "([`docs/architecture/flag-ledger.md`](docs/architecture/flag-ledger.md)), "
-        "the substrate-quality trace "
-        "([`docs/architecture/substrate-quality.md`](docs/architecture/substrate-quality.md)), "
-        "and the hygiene backlog "
-        "([`docs/architecture/hygiene-backlog.md`](docs/architecture/hygiene-backlog.md)). "
-        "They are cross-cutting prose with no tail of their own to close, and "
-        "forcing them into the arc schema is how the schema gets wrong. They stay "
-        "hand-maintained."
     )
     add("")
 

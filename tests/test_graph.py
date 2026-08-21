@@ -125,3 +125,58 @@ def test_ready_items_are_key_ordered():
     and getting different items."""
     by_key = {k: _plain(k) for k in ("c", "a", "b")}
     assert [i["key"] for i in graph.ready_items(by_key)] == ["a", "b", "c"]
+
+
+# --- the generated files must be readable in a project that is not this one ---
+#
+# Both artifacts are written FOR a reader with nothing installed and no network,
+# which is exactly the reader who cannot resolve a path that does not exist in
+# their checkout. Asserted rather than reviewed: these strings sit in prose
+# blocks nobody re-reads, and the failure is silent — the file renders, CI is
+# green, and only a human following the instruction finds out it is wrong.
+
+_EXTRACTION_REPO_PATHS = (
+    # The shim in the repository this package was extracted from. Adopters
+    # install the console script instead and have no `scripts/` entry at all.
+    "scripts/roadmap.py",
+    # Three hand-maintained docs that only ever existed over there.
+    "docs/architecture",
+)
+
+
+def _one_of_everything():
+    """A graph exercising every section that carries prose: ready, deferred,
+    claimed and blocked all render their own instructions."""
+    by_key = {
+        "startable": _plain("startable", arc="an-arc"),
+        "parked": _plain("parked", defer_reason="not yet", arc="an-arc"),
+        "held": _plain("held", claimed_by="claude/x", claimed_at="2020-01-01T00:00:00Z"),
+        "waiting": _plain("waiting", blocked_on=["held"]),
+    }
+    arcs = {"an-arc": {"key": "an-arc", "title": "An arc", "narrative": "why it is open"}}
+    return arcs, by_key
+
+
+def test_generated_markdown_names_no_path_from_the_extraction_repo():
+    arcs, by_key = _one_of_everything()
+    rendered = {
+        "ROADMAP.md": graph.render_markdown(by_key),
+        "ARCS.md": graph.render_arcs_markdown(arcs, by_key),
+    }
+    for name, text in rendered.items():
+        for path in _EXTRACTION_REPO_PATHS:
+            assert path not in text, (
+                f"{name} tells its reader about {path!r}, which exists only in the "
+                f"repository this package was extracted from. Use `graph.CLI`."
+            )
+
+
+def test_generated_markdown_names_the_console_script_this_package_installs():
+    """The other half: having removed the wrong command, say the right one.
+
+    A guard that only forbids the old string passes just as happily on a file
+    that names no command at all, which is the same reader stranded a different
+    way."""
+    arcs, by_key = _one_of_everything()
+    for text in (graph.render_markdown(by_key), graph.render_arcs_markdown(arcs, by_key)):
+        assert f"`{graph.CLI} sync`" in text
