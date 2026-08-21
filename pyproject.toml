@@ -1,6 +1,6 @@
 [project]
 name = "roadmap-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "The roadmap work-item and arc graph: status derivation, validation, and markdown rendering. Stdlib-only, so any repo can adopt it without adopting a backend."
 requires-python = ">=3.11"
 readme = "README.md"
