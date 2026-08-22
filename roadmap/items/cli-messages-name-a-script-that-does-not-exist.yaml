@@ -1,0 +1,49 @@
+id: cli-messages-name-a-script-that-does-not-exist
+title: Finish the job on the CLI's own messages — fourteen still name roadmap.py
+status: ready
+arc: adoptable-by-anyone
+priority: now
+blocked_on: []
+refs:
+- 'https://github.com/gald33/roadmap-core/pull/1'
+- 'https://github.com/gald33/roadmap-core/pull/2'
+- 'roadmap_core/cli.py'
+evidence: |
+  PR #1 fixed the strings the *generated markdown* emits and introduced
+  `graph.CLI` for them. PR #2 (merged as 2015b48, released 0.2.1) fixed four more
+  in the CLI itself. Neither finished the sweep.
+
+  Recounted on `main` at 2015b48, after #2 landed: zero strings say `python
+  scripts/roadmap.py`, and **fourteen** still say bare `roadmap.py`. Those are the
+  ones no grep for the old form will ever surface, which is why the sweep looked
+  finished:
+
+      365   re-run `roadmap.py pull` afterwards and check the file
+      814   seed it with `roadmap.py push` first
+      851   right, run `roadmap.py status <key> done`
+      856   If this file predates a `prune`, run `roadmap.py pull`
+      952   refiled, run `roadmap.py refile <key>`
+      998   Run `roadmap.py pull` first
+      1002  `roadmap.py prune` when you are ready to clear it
+      1043  Fix: `roadmap.py pull`
+      1048  Fix: `roadmap.py push`
+      1263  `roadmap.py diff` shows the gap
+      1291  then `roadmap.py release <key>`
+      1315  Release what you are done with — `roadmap.py release <key>`
+      1753  Run `roadmap.py pull` first
+      1813  when you finish or stop: `roadmap.py release <key>`
+
+  Observed rather than only grepped: running `roadmap ready` in a scratch project
+  with one item prints
+
+      note: claims here are the committed projection and can lag the store.
+      `--source db` is authoritative; `roadmap.py diff` shows the gap.
+
+  There is no `roadmap.py` on an adopter's PATH. The console script is `roadmap`.
+  Every one of these is advice a reader cannot act on, and they appear at exactly
+  the moments someone is stuck — a stale file, a lost claim, a drifted store.
+
+  Do it as a sweep with a guard, not string by string. A test asserting no
+  user-facing string in `cli.py` matches `roadmap\.py` is what stops the
+  nineteenth from being added next month; that is the shape PR #1 used for the
+  markdown, and it is the only reason this count is knowable at all.

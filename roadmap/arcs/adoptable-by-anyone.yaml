@@ -1,0 +1,23 @@
+id: adoptable-by-anyone
+title: The residue of the repo this came from, on surfaces an adopter reads
+refs:
+- 'https://github.com/gald33/roadmap-core/pull/1'
+- 'https://github.com/gald33/roadmap-core/pull/2'
+narrative: |
+  The package's whole claim is in its own README: a project that is not Lucille
+  can adopt this without adopting Lucille with it. The library half of that is
+  true and asserted — stdlib only, and a CI job that fails if `app`, `fastapi`,
+  `sqlalchemy` or `yaml` can be imported at all.
+
+  The *strings* were never held to it. Commands, environment variables, error
+  remedies and namespace lists all still name one company's checkout, and they
+  surface exactly where a newcomer is already stuck: a stale generated file, a
+  claim they cannot release, a validation error they cannot act on.
+
+  These are not cosmetic. A dependency an adopter cannot resolve fails loudly at
+  install time; an instruction they cannot follow fails silently, at the moment
+  they most need it, and looks like their mistake.
+
+  The pattern for closing each one is set by PR #1: put the real value in a
+  constant, then add a test that fails if the old one comes back. Sweeping the
+  strings without the guard is how the count went from four to eighteen.
