@@ -1,0 +1,94 @@
+id: nothing-tells-an-adopter-their-setup-is-broken
+title: Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
+status: ready
+arc: adoptable-by-anyone
+priority: now
+claim:
+  by: claude/adopter-doctor-and-version
+  at: '2026-08-22T11:08:14Z'
+blocked_on: []
+refs:
+- 'roadmap_core/cli.py'
+- 'tests/test_adoption.py'
+evidence: |
+  MEASURED 2026-08-22 by auditing the two repositories that consume this package
+  and the one that ships it.
+
+  THE ARC SAYS the failures that matter are the ones that "fail silently, at the
+  moment they most need it, and look like their mistake". This is that failure
+  with no string in it to fix: there is no command an adopter can run to find out
+  whether their setup works, and no way for anyone to find out which version they
+  are running. Verified absent at e715075 — `grep` for `--version`, `doctor` and
+  `__version__` across `roadmap_core/` returns nothing.
+
+  WHAT IT COST THE ADOPTER I CAN MEASURE. Lucille vendored this package until it
+  became a dependency. The tool crossed intact — a function-level diff of its old
+  in-repo CLI against `roadmap_core/cli.py` shows one function dropped and all 14
+  subcommands present, and Lucille's 196 roadmap tests pass against 0.2.1. What
+  broke was everything the vendoring had been guaranteeing for free:
+
+    * NOTHING INSTALLED IT. In a clean worktree of Lucille's `main`,
+      `python3 scripts/roadmap.py ready` exits 1 with "roadmap-core is not
+      installed". That is the first command its own contributor guide tells every
+      agent session to run, and claiming work is a convention rather than a gate
+      — so this was never an error anybody saw. It was sessions quietly not
+      claiming, which is the collision the tool exists to prevent.
+    * TWO INSTALLS DRIFTED, UNDETECTED. Its backend declared `roadmap-core>=0.1.0`
+      with a lock at **0.1.0** while the published package was **0.2.1**. The
+      backend's copy and the copy a developer's CLI runs are separate installs;
+      nothing on either side can report its own version, so nothing could have
+      noticed. Its schema-parity test was passing against a package its CLI never
+      used.
+
+  A `doctor` would have said both in one line. Neither is exotic: "is the package
+  importable, does the repo root resolve where you think, is `roadmap/items/`
+  where the CLI is looking, is the store reachable, which version is this".
+
+  REPRODUCED WHILE FILING THIS ITEM, which is the strongest evidence in it. Run
+  from this repository's own root, against a store that had never been seeded:
+
+      $ ROADMAP_SOURCE=local roadmap validate
+      ok — 0 item(s), 0 arc(s), no problems
+      $ ROADMAP_SOURCE=local roadmap ready
+      nothing ready — everything is claimed, blocked, or done
+
+  Seven items were sitting in `roadmap/items/` at the time. `local` reads the
+  SQLite store, which is empty until `push` seeds it, so the correct reading of
+  "0 items, no problems" is *"I am pointed at an empty store"* — and what it says
+  instead is `ok`. `ready` then reports the backlog is finished. Both are green,
+  confident and wrong, and the fix is one command (`push`) that nothing suggests
+  because nothing has noticed anything is amiss.
+
+  That is not a hypothetical adopter. It is this package, in its own checkout,
+  three commands into being used.
+
+  THE TWO FAILURES THIS PACKAGE ALREADY KNOWS ABOUT are the same shape.
+  `tests/test_adoption.py`'s docstring records them: a CLI that could not find its
+  graph because the path only existed in one company's layout, and a shim at the
+  wrong depth making `push` report *"no item files to push"* — which reads as an
+  empty backlog rather than as a misconfiguration. Both are one line of `doctor`
+  output. That test exists because they were found the expensive way, twice.
+
+  SCOPE — NOT THE SHIM. An earlier draft of this proposed shipping a
+  `scripts/roadmap.py` template on the theory that every adopter writes one.
+  Checked against the other adopter and it is false: switchboard runs 10 items
+  with **no shim at all** — `ROADMAP_SOURCE=local` plus the `roadmap` console
+  script. A shim is a *served-store* concern (pinning a repo root and a backend
+  URL), not a general one, and templating it would hand the floor's adopters
+  machinery for a problem they do not have — the same reasoning
+  `templates/roadmap.yml` already states about Lucille's 333-line sync workflow.
+
+  ACCEPTANCE — the point is that a broken setup announces itself, not that the
+  README explains how to check:
+
+    1. `roadmap doctor` exits non-zero on a broken setup and names the specific
+       thing that is wrong, one line each. VERIFIED AGAINST DELIBERATELY BROKEN
+       PROJECTS — a missing `roadmap/items/`, a repo root resolved somewhere
+       unexpected, an unreachable served store — not by running it on a healthy
+       one and seeing it say OK. A doctor that passes everything is the guard
+       that always fires, inverted.
+    2. `roadmap --version` reports the installed distribution version.
+    3. `doctor` reports the version too, because the question "which one is this"
+       is asked while diagnosing, not before.
+    4. The adoption test covers `doctor` in its scratch project, so the command
+       that certifies an adoption is itself certified by the adoption test.

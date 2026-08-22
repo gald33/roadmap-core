@@ -311,3 +311,65 @@ def test_diff_reconciles_against_the_local_store_without_a_credential(project):
         f"diff reported agreement:\n{drifted.stdout}\n{drifted.stderr}"
     )
     assert "first-thing" in drifted.stdout + drifted.stderr
+
+
+# --- doctor -------------------------------------------------------------------
+#
+# The command that certifies an adoption has to be certified by the adoption
+# test, or it is one more thing whose correctness is assumed. These use the same
+# scratch project as everything above: nothing installed, no server, no token.
+
+
+def test_doctor_passes_on_a_project_that_is_set_up(project):
+    """The healthy case, and the only one where a zero exit is meaningful — it is
+    meaningful only because the broken cases below are red."""
+    run(project, "push")
+    result = run(project, "doctor")
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "setup looks complete" in result.stdout
+    assert "roadmap-core" in result.stdout, "doctor must report the version it is"
+
+
+def test_doctor_catches_the_store_nobody_seeded(project):
+    """THE failure this command exists for, and the reason a version of it that
+    only reports success would be worse than nothing.
+
+    A `local` store is empty until `push` seeds it, and every read command
+    answers from the store. So `validate` on this exact project says *"ok — 0
+    item(s), no problems"* and `ready` says the backlog is finished: green,
+    confident, and wrong, with a one-command remedy nothing suggests.
+    """
+    # The premise: the other commands really are cheerful about it.
+    assert run(project, "validate").returncode == 0
+    assert "0 item(s)" in run(project, "validate").stdout
+
+    result = run(project, "doctor")
+
+    assert result.returncode == 1, f"doctor passed a broken setup:\n{result.stdout}"
+    assert "0 items while roadmap/items/ holds 1" in result.stderr
+    assert "roadmap push" in result.stderr, "a diagnosis without a remedy is half of one"
+
+
+def test_doctor_catches_being_pointed_at_the_wrong_directory(tmp_path):
+    """The second failure `test_adoption.py`'s own docstring records: run from
+    somewhere with no project above it and every path still resolves, `push`
+    reports "no item files to push", and that reads as an empty backlog rather
+    than as a misconfiguration."""
+    elsewhere = tmp_path / "not-a-project"
+    elsewhere.mkdir()
+
+    result = run(elsewhere, "doctor")
+
+    assert result.returncode == 1
+    assert "repo root" in result.stderr
+    assert "roadmap/items" in result.stderr
+
+
+def test_the_version_is_answerable_without_a_subcommand(project):
+    """Asked when two installs are suspected of disagreeing — a moment when
+    every subcommand is under suspicion too, so it must not need one."""
+    result = run(project, "--version")
+
+    assert result.returncode == 0
+    assert "roadmap-core" in result.stdout
