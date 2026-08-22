@@ -12,7 +12,6 @@ Claim before starting: `roadmap claim <key>`
 
 **In priority order, most important first.** An item with no marker carries no stated priority — take it as unjudged, not as low. The order within a band is alphabetical and means nothing.
 
-- `now` **`a-claim-cannot-survive-the-floors-ci`** — On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
 - `now` **`cli-messages-name-a-script-that-does-not-exist`** — Finish the job on the CLI's own messages — fourteen still name roadmap.py
   - ↔ related: **`credential-error-names-one-repos-secret`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
 - `next` **`artifact-namespaces-are-one-projects`** — Let a project declare its own artifact namespaces instead of inheriting seven
@@ -53,7 +52,7 @@ graph TD
 ### `a-claim-cannot-survive-the-floors-ci`
 
 - **title:** On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
-- **status:** ready
+- **status:** done
 - **arc:** adoptable-by-anyone
 - **priority:** now
 - **refs:**
@@ -123,6 +122,64 @@ graph TD
 >   3. Whichever way it is decided, `roadmap/README.md` states which side owns
 >      `claim` and under which store, because the answer is not guessable from
 >      the field's name.
+>
+> --- 2026-08-22: RULED AND FIXED ---
+>
+> RULED: `claim` is AUTHORITATIVE ON THE FLOOR and a PROJECTION WHEN SERVED. One
+> field, two meanings, decided by which store you are holding — the question this
+> item said had to be answered before any code moved. It is answered by which
+> copy outlives the other.
+>
+> On the floor the store is ephemeral: CI deletes it and rebuilds it from
+> `roadmap/items/*.yaml` every run, so the file is the only durable record a
+> claim has. Against a served store the file is a snapshot of something that
+> outlives it, so honouring a claim from a stale checkout would recreate one the
+> store had already released — the resurrection class `roadmap_prunes` exists to
+> prevent. So `LocalStore.upsert_item` takes `claimed_by`/`claimed_at` on CREATE
+> and `cmd_push` sends them to the local store only. The API path is untouched.
+>
+> CREATE ONLY, exactly as `status` already is. On update the store is the live
+> record of who holds what, and a push from a checkout predating a release would
+> hand the item back to a session that has let go.
+>
+> ACCEPTANCE 1 — verified by doing it, in `test_adoption.py`: claim, commit what
+> the CLI says to commit, DELETE the store, push, validate, `sync --check`. Green,
+> with the item still claimed and the holder's name intact. The store is deleted
+> between the halves on purpose; checking against the warm store the claim was
+> made in is what hid this, because it agrees with itself. Negative-checked — the
+> test fails against the old code at exactly the `sync --check` line.
+>
+> ACCEPTANCE 2 — a test drives `push --source db` with a file carrying a claim
+> and asserts no `claimed_by` reaches the payload. Asserted, not assumed.
+>
+> ACCEPTANCE 3 — `README.md` states which side owns `claim` under which store,
+> in the adoption section, because it is not guessable from the field's name.
+>
+> --- FIXING IT EXPOSED TWO MORE, both invisible until claims survived ---
+>
+> 1. `done` DID NOT DROP THE CLAIM on the floor. The served path clears the hold
+>    deliberately — "finishing is the one moment a hold is definitely over" — and
+>    the CLI has always PRINTED "done also drops the claim". `LocalStore.set_status`
+>    never did it. Nobody could see the difference while a claim evaporated on
+>    every rebuild anyway; the first item finished after this fix immediately
+>    started reporting an unreleased hold on itself.
+>
+> 2. `status done` DID NOT CLEAR THE FILE'S CLAIM BLOCK. It projects the
+>    `status:` line and nothing else, so the store dropped the hold and the next
+>    push read it straight back out of the file. Harmless where the store is
+>    authoritative and `pull` exists to correct the file; on the floor the file
+>    IS the record, so it meant `sync --check` going red over a claim nobody
+>    held. `cmd_status` now projects the release too.
+>
+> Both are the shape CLAUDE.md calls "fixing bug #1 exposes bug #2", and both
+> were found by running the tool on itself rather than by reading it.
+>
+> ONE THING WORTH KNOWING, also from testing: after a rebuild the stored `status`
+> column reads `ready` while `claimed_by` is set, because the claim projection
+> writes the file's `claim:` block and never touches its `status:` line. Nothing
+> is wrong — `graph.derive_status` derives `claimed` from an active claim, which
+> is why `list`, `show` and the rendered markdown all agree. Written down because
+> a reader querying the column directly would draw the wrong conclusion.
 >
 > WORKAROUND UNTIL THEN: release before you commit the markdown, which is what
 > PR #5 did — and which means the floor's claim protocol currently cannot be

@@ -29,6 +29,7 @@ empty backlog for an afternoon.
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -411,3 +412,85 @@ def test_the_version_names_the_code_that_is_running_not_the_one_installed(
         "the version must name where the running code came from when that is not "
         f"the installed distribution — got: {result.stdout!r}"
     )
+
+
+# --- claiming, on the floor, end to end ---------------------------------------
+
+
+def test_a_floor_project_can_claim_and_still_pass_its_own_ci(project):
+    """The failure `a-claim-cannot-survive-the-floors-ci` describes, run whole.
+
+    Claim an item, commit what the CLI tells you to commit, then let CI rebuild
+    the store from the files — which is what `.github/workflows/roadmap.yml`
+    does on every run, because on the floor the store is a SQLite file that does
+    not exist until `push` creates it.
+
+    Before the fix this ended in `ARCS.md is stale — run 'roadmap sync'`, and
+    `sync` did not fix it: the file said `claimed`, a fresh push rendered
+    `ready`, and the two could not agree while anybody held anything. The floor's
+    CI was red for exactly as long as its coordination feature was in use.
+
+    The store is deleted between the two halves ON PURPOSE. Checking against the
+    warm store the claim was made in is what hid this — it agrees with itself.
+    """
+    assert run(project, "push").returncode == 0
+    # `--by` explicitly: the scratch project is not a git repository, so
+    # `current_branch()` has nothing to read and the holder would be the literal
+    # string "unknown" — which would still pass a test that only checked the
+    # claim survived, while proving nothing about the name travelling with it.
+    assert run(project, "claim", "first-thing", "--by", "claude/holder").returncode == 0
+    assert run(project, "sync").returncode == 0
+
+    (project / "roadmap" / "roadmap.db").unlink()          # as CI starts
+    assert run(project, "push").returncode == 0
+    assert run(project, "validate").returncode == 0
+
+    checked = run(project, "sync", "--check")
+    assert checked.returncode == 0, (
+        "a claimed item makes the committed markdown unreproducible:\n"
+        f"{checked.stdout}\n{checked.stderr}"
+    )
+    # And the holder survived, not merely the status: a rebuild that kept
+    # `claimed` while losing WHO holds it would still leave the next session
+    # unable to tell whether the item is theirs.
+    assert "CLAIMED" in run(project, "list").stdout
+    assert "claude/holder" in run(project, "show", "first-thing").stdout
+
+
+def test_the_served_path_still_refuses_to_carry_a_claim(project, monkeypatch):
+    """Acceptance 2, asserted rather than assumed.
+
+    The same move against a SERVED store is the resurrection class: its store
+    outlives the checkout, so a push from a stale clone would recreate a claim
+    that store had already released. The fix must be visible on the floor and
+    absent over the API, and the only way to know is to look at what `push`
+    actually sends.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "roadmap_core.cli", PACKAGE_ROOT / "roadmap_core" / "cli.py"
+    )
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    monkeypatch.setattr(cli, "REPO_ROOT", project)
+    monkeypatch.setattr(cli, "ITEMS_DIR", project / "roadmap" / "items")
+    monkeypatch.setattr(cli, "ARCS_DIR", project / "roadmap" / "arcs")
+    (project / "roadmap" / "items" / "first-thing.yaml").write_text(
+        ITEM + "claim:\n  by: claude/stale-checkout\n  at: '2026-01-01T00:00:00Z'\n"
+    )
+
+    sent: list[dict] = []
+    monkeypatch.setattr(cli, "_api", lambda m, p, payload=None: sent.append(payload or {}))
+    monkeypatch.setattr(cli, "load_from_db", dict)
+
+    cli.cmd_push(argparse.Namespace(source="db"))
+
+    item_payloads = [p for p in sent if "evidence" in p]
+    assert item_payloads, "push sent no item at all"
+    for payload in item_payloads:
+        assert "claimed_by" not in payload, (
+            "the served store must not be handed a claim from a file — a stale "
+            f"checkout would resurrect a released one: {payload}"
+        )

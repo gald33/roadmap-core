@@ -452,3 +452,85 @@ def test_json_columns_named_by_the_schema_are_the_ones_decoded(db):
     item = db.items()["alpha"]
     for column in store.JSON_COLUMNS["roadmap_items"]:
         assert not isinstance(item[column], str), f"{column} came back as raw JSON text"
+
+
+# --- claim on the floor -------------------------------------------------------
+#
+# The store here is EPHEMERAL: CI deletes it and rebuilds it from the committed
+# YAML every run. So a claim that a file records has to survive being pushed, or
+# a held item renders as `ready` and the committed markdown can never match what
+# CI generates. That is `a-claim-cannot-survive-the-floors-ci`, and these pin the
+# ruling: authoritative on the floor, CREATE only, exactly like `status`.
+
+
+def test_a_claim_in_the_file_survives_a_rebuild_of_the_store(db):
+    db.upsert_item({
+        "key": "alpha",
+        "title": "Alpha",
+        "status": "claimed",
+        "claimed_by": "claude/some-branch",
+        "claimed_at": "2026-08-22T10:00:00+00:00",
+    })
+    item = db.items()["alpha"]
+    assert item["claimed_by"] == "claude/some-branch"
+    assert item["claimed_at"] == "2026-08-22T10:00:00+00:00"
+    assert item["status"] == "claimed"
+
+
+def test_an_update_cannot_move_a_claim(db):
+    """CREATE only, for the same reason `status` is.
+
+    On update the store is the live record of who holds what — a push from a
+    checkout that predates a release would otherwise hand the item back to a
+    session that has already let go.
+    """
+    db.upsert_item({"key": "alpha", "title": "Alpha"})
+    db.claim("alpha", by="claude/live")
+
+    db.upsert_item({
+        "key": "alpha",
+        "title": "Alpha",
+        "claimed_by": "claude/stale-checkout",
+        "claimed_at": "2026-01-01T00:00:00+00:00",
+    })
+
+    assert db.items()["alpha"]["claimed_by"] == "claude/live"
+
+
+def test_an_unclaimed_file_creates_an_unclaimed_item(db):
+    """The ordinary case: no claim block, no claim. Asserted because the create
+    path now writes those columns explicitly rather than leaving them to the
+    schema default, and `None` is the value that has to arrive."""
+    db.upsert_item({"key": "alpha", "title": "Alpha"})
+    item = db.items()["alpha"]
+    assert item["claimed_by"] is None
+    assert item["claimed_at"] is None
+
+
+def test_done_drops_the_claim(db):
+    """The CLI has always printed "done also drops the claim". On the floor it
+    did not — the served path clears the hold and this one did not, and nobody
+    could see the difference because a claim never survived a rebuild anyway.
+
+    Fixing claims-survive-a-rebuild is what made this visible: the notice about
+    an unreleased hold started firing on an item that had just been finished.
+    """
+    db.upsert_item({"key": "alpha", "title": "Alpha"})
+    db.claim("alpha", by="claude/holder")
+
+    row = db.set_status("alpha", "done")
+
+    assert row["status"] == "done"
+    assert row["claimed_by"] is None
+    assert row["claimed_at"] is None
+
+
+def test_a_status_that_is_not_done_leaves_the_claim_alone(db):
+    """`verifying` explicitly does NOT drop it: the branch that shipped the work
+    still owns confirming it landed."""
+    db.upsert_item({"key": "alpha", "title": "Alpha"})
+    db.claim("alpha", by="claude/holder")
+
+    row = db.set_status("alpha", "verifying")
+
+    assert row["claimed_by"] == "claude/holder"
