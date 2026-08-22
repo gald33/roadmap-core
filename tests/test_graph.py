@@ -180,3 +180,55 @@ def test_generated_markdown_names_the_console_script_this_package_installs():
     arcs, by_key = _one_of_everything()
     for text in (graph.render_markdown(by_key), graph.render_arcs_markdown(arcs, by_key)):
         assert f"`{graph.CLI} sync`" in text
+
+
+# --- and the CLI's own messages, which the test above does not reach ---------
+#
+# `graph.CLI` fixed the headers *inside* the generated files. It did not fix the
+# messages the CLI prints when it wants you to regenerate them — and those are
+# strictly more likely to be read, because `sync --check` prints one every time
+# the drift guard fires. An adopter upgrading to the release that removed
+# `scripts/roadmap.py` from the generated files was told, by that same release,
+# to run `python scripts/roadmap.py sync`.
+#
+# Parsed rather than imported: `roadmap_core.cli` is not importable in the
+# isolation job, and the docstrings in that module discuss the extraction repo
+# legitimately. Only strings on their way to a user are checked.
+
+def _printed_strings(path):
+    """Every string constant that reaches a `print(...)` call, f-strings included."""
+    import ast
+
+    tree = ast.parse(path.read_text())
+    out = []
+
+    def literals(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            out.append(node.value)
+        elif isinstance(node, ast.JoinedStr):
+            for part in node.values:
+                if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    out.append(part.value)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "print":
+            for arg in node.args:
+                literals(arg)
+                for sub in ast.walk(arg):
+                    literals(sub)
+    return out
+
+
+def test_cli_messages_name_no_path_from_the_extraction_repo():
+    import importlib.util
+    from pathlib import Path
+
+    cli_path = Path(importlib.util.find_spec("roadmap_core.cli").origin)
+    printed = _printed_strings(cli_path)
+    assert printed, "parsed no printed strings — the AST walk stopped working"
+    for text in printed:
+        for bad in _EXTRACTION_REPO_PATHS:
+            assert bad not in text, (
+                f"cli.py prints {text!r}, naming {bad!r} — a path that exists only in "
+                f"the repository this package was extracted from. Use `graph.CLI`."
+            )

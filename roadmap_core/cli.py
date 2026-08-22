@@ -781,7 +781,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if current_arcs != rendered_arcs:
             print(
                 f"{GENERATED_ARCS_MD.relative_to(REPO_ROOT)} is stale — "
-                "run `python scripts/roadmap.py sync`",
+                f"run `{graph.CLI} sync`",
                 file=sys.stderr,
             )
             return 1
@@ -792,7 +792,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if current != rendered:
             print(
                 f"{GENERATED_MD.relative_to(REPO_ROOT)} is stale — "
-                "run `python scripts/roadmap.py sync`",
+                f"run `{graph.CLI} sync`",
                 file=sys.stderr,
             )
             return 1
@@ -1244,7 +1244,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
         return 0
     print(
         f"{len(created)} created, {len(updated)} updated — "
-        f"now run `python scripts/roadmap.py sync` and commit"
+        f"now run `{graph.CLI} sync` and commit"
     )
     return 0
 
@@ -1508,7 +1508,7 @@ def cmd_prune(args: argparse.Namespace) -> int:
         else:
             print(f"pruned {key} — store: {outcome}, no file")
     _release_dependents(done)
-    print(f"{len(done)} item(s) pruned — now run `python scripts/roadmap.py sync` and commit")
+    print(f"{len(done)} item(s) pruned — now run `{graph.CLI} sync` and commit")
     return 0
 
 
