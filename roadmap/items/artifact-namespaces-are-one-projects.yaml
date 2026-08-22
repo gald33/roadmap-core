@@ -1,0 +1,39 @@
+id: artifact-namespaces-are-one-projects
+title: Let a project declare its own artifact namespaces instead of inheriting seven
+status: ready
+arc: adoptable-by-anyone
+priority: next
+blocked_on: []
+refs:
+- 'roadmap_core/graph.py'
+evidence: |
+  `ARTIFACT_PREFIXES` is a fixed tuple of seven namespaces, and every one belongs
+  to the project this package came from:
+
+      ('alembic', 'module', 'roadmap', 'web', 'docs', 'config', 'script')
+
+  `validate_graph` reports any token outside it. Reproduced in a scratch project,
+  using the exact resource-name shape switchboard's own `docs/seam.md` recommends
+  for compiling a static collision into a name:
+
+      $ roadmap validate
+      error: a-thing: unknown artifact namespace 'artifact' in
+      'artifact:migrations-counter' — one of alembic, module, roadmap, web,
+      docs, config, script, or add it deliberately
+
+  So the documented cross-tool pattern fails validation out of the box. "Or add it
+  deliberately" is the right instinct and points at the bug: it invites an adopter
+  to edit a constant inside an installed package, which they cannot do without
+  vendoring it.
+
+  The field is warn-only by design, and that is what keeps this at `next` rather
+  than `now` — nothing is blocked, the edge still surfaces the contention. But a
+  warning every adopter learns to ignore is the failure mode the field's own
+  comment names: "a typo'd token silently matches nothing, which is the one
+  failure mode of a warn-only field — it looks declared and warns about nothing."
+  A namespace list nobody can extend produces exactly that habit.
+
+  Cheapest shape that keeps the typo guard: read the allowed set from the
+  project — a key in `roadmap/README.md`'s frontmatter, or a `roadmap/config.yaml`
+  — and fall back to the current tuple when absent, so nothing changes for the
+  repo that has one today.

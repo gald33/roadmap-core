@@ -1,0 +1,38 @@
+id: generated-file-points-at-an-uncreated-readme
+title: Create the roadmap/README.md the generated files and the validator both cite
+status: ready
+arc: the-floor-as-shipped
+priority: later
+blocked_on: []
+refs:
+- 'roadmap_core/graph.py'
+- 'README.md'
+evidence: |
+  Two places send a reader to `roadmap/README.md`, and nothing ever writes one.
+
+  * Every generated `ROADMAP.md` opens with "the store is the `roadmap_items`
+    table (see `roadmap/README.md`)".
+  * `validate_graph`'s missing-evidence error is literally
+    "no evidence — see roadmap/README.md rule 2".
+
+  There is no `roadmap new`, no `roadmap init`, and the adoption instructions in
+  this package's README are `mkdir -p roadmap/items` — so an adopter who follows
+  them exactly ends up with two artifacts citing a file they were never told to
+  write. The second one is worse than a dead link: it cites a *rule number* in a
+  document that does not exist, so the error explains itself by reference to
+  nothing.
+
+  Two honest fixes, and they are not the same amount of work:
+
+  1. **Make the messages self-contained.** Have the evidence error say what
+     evidence is for rather than delegating to a rule number, and drop the
+     parenthetical from the header. Small, and removes the dangling reference
+     without adding a feature.
+  2. **Ship the file.** A `roadmap init` that writes a starter `roadmap/README.md`
+     alongside `roadmap/items/`. Bigger, and it cuts against "authoring an item is
+     writing a YAML file, there is no `roadmap new`" — though a one-time scaffold
+     is a different thing from a per-item command.
+
+  `later` because a reader who does not find the file loses an explanation, not a
+  command — everything still works. Doing (1) alone would already be worth it, and
+  is the version to start from.

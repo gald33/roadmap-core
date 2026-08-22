@@ -1,0 +1,30 @@
+id: roadmap-core-runs-its-own-roadmap
+title: Run this package's own backlog on this package
+status: done
+arc: the-floor-as-shipped
+blocked_on: []
+refs:
+- 'https://github.com/gald33/switchboard/pull/154'
+- '.github/workflows/roadmap.yml'
+evidence: |
+  A tool for tracking work that did not track its own. Every claim this package
+  makes about being adoptable was tested somewhere else — `tests/test_adoption.py`
+  against a scratch directory, and then for real in `switchboard` — while the
+  repository that ships it had no `roadmap/` at all.
+
+  That gap is how the two defects fixed in PR #1 survived: the generated header
+  and the ARCS.md preamble named paths from the project this was extracted from,
+  and nobody read them here because nothing here generated them. They were found
+  by an outside adopter on first contact.
+
+  Now the floor runs on itself: `roadmap/items/*.yaml`, `roadmap/arcs/*.yaml`, the
+  committed `roadmap/ROADMAP.md` and `ARCS.md`, and a `roadmap` CI job.
+
+  **One deliberate difference from `templates/roadmap.yml`, and it is the point of
+  doing this at all.** The template tells an adopter `pip install
+  "roadmap-core[files]"`, which resolves the last *release*. This repository's job
+  installs the checkout (`pip install ".[files]"`) instead, so the roadmap check
+  exercises the code in the pull request rather than the version that shipped
+  before it. Installing the release here would mean a PR that breaks rendering is
+  validated by the last build that did not — which is precisely the class of bug
+  this item exists to catch.

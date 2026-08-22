@@ -1,0 +1,35 @@
+id: arcs-md-path-is-not-configurable
+title: Decide whether ARCS.md at the repository root is the contract or an accident
+status: ready
+arc: the-floor-as-shipped
+priority: later
+blocked_on: []
+refs:
+- 'roadmap_core/cli.py'
+- 'https://github.com/gald33/switchboard/pull/154'
+evidence: |
+  The two generated files land in different places:
+
+      GENERATED_MD      = REPO_ROOT / "roadmap" / "ROADMAP.md"     (cli.py:109)
+      GENERATED_ARCS_MD = REPO_ROOT / "ARCS.md"                    (cli.py:113)
+
+  One is namespaced under `roadmap/`, its sibling is dropped in the repository
+  root. Nothing in the code says why, and the asymmetry is invisible until you
+  adopt the package and a file you did not ask for appears next to your README.
+
+  Measured cost, not hypothetical: adopting this in `switchboard` needed a
+  paragraph in that repo's `roadmap/README.md` warning contributors NOT to tidy
+  `ARCS.md` into `roadmap/`, because `sync --check` compares against the hard-coded
+  path and moving it turns CI red on a file it cannot find. Every adopter will
+  either write that paragraph or discover it from a red build.
+
+  Root placement may well be deliberate — an arcs narrative is for humans browsing
+  the repo, and burying it one directory down does reduce the chance anyone reads
+  it. That is a defensible answer. It is just not written down anywhere, and the
+  next person to look at these two constants will read it as an oversight and
+  "fix" it.
+
+  So the work is to decide and then make the decision enforce itself: either move
+  it under `roadmap/` with the other generated file, or keep it and say why in a
+  comment next to the constant. `later` because nothing is broken — a documented
+  wart is survivable, an undocumented one is what this is.

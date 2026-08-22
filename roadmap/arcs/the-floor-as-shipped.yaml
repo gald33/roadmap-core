@@ -1,0 +1,21 @@
+id: the-floor-as-shipped
+title: What an adopter actually gets, versus what the docs describe
+refs:
+- 'README.md'
+- 'templates/roadmap.yml'
+narrative: |
+  The SQLite floor is meant to be the whole story for a project with no backend:
+  `pip install`, `mkdir roadmap/items`, write YAML, done. Measured end to end by
+  `tests/test_adoption.py`, which runs the CLI as a subprocess with nothing on the
+  path but this package.
+
+  What that test cannot see is everything the adopter *reads* — a file the
+  generated output cites but no command creates, a second generated file landing
+  somewhere its sibling does not, a rule number pointing into a document that was
+  never shipped. None of it breaks a command, which is exactly why a passing
+  adoption test coexists with all of it.
+
+  This arc is also where the package finally runs its own backlog. The two defects
+  PR #1 fixed lived in generated files this repository never generated, and were
+  found by the first outside adopter rather than by anyone here. Dogfooding is not
+  a virtue exercise; it is the only reader who reliably notices.

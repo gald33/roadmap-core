@@ -1,0 +1,51 @@
+# This package's own roadmap check.
+#
+# Deliberately NOT a copy of `templates/roadmap.yml`. The template hands an
+# adopter `pip install "roadmap-core[files]"`, which resolves the last release.
+# Here that would be backwards: a pull request that breaks rendering would be
+# validated by the last build that did not, and the drift guard would report
+# green on the change that broke it. So this installs the checkout.
+#
+# Everything else is the template verbatim: three commands, no schedule, no
+# credential, no bot identity, no commit back to the default branch. The store is
+# a SQLite file inside the checkout, rebuilt from the committed YAML by `push` on
+# first open, so there is no second copy to reconcile.
+
+name: Roadmap
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  roadmap:
+    runs-on: ubuntu-latest
+    env:
+      # Selects the SQLite store. Without it the write commands expect a served
+      # store and ask for a credential this repository does not have.
+      ROADMAP_SOURCE: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The checkout, not the release. `[files]` adds PyYAML, which authoring
+      # needs, and puts the `roadmap` console script on PATH from this source
+      # tree — so the three commands below exercise the code under review.
+      - run: pip install ".[files]"
+
+      # Files -> store, rebuilt fresh each run. The files are the record.
+      - run: roadmap push
+
+      # Schema, dangling dependencies, cycles, and the missing-evidence rule.
+      - run: roadmap validate
+
+      # And the committed markdown against the graph that generated it.
+      # `--check` exits 1 rather than rewriting, because CI must report a stale
+      # file, not quietly fix one in a container about to be discarded.
+      - run: roadmap sync --check
