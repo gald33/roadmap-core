@@ -172,6 +172,20 @@ def _row_to_arc(row: sqlite3.Row) -> dict[str, Any]:
 class LocalStore:
     """The roadmap in one SQLite file, with no server anywhere.
 
+    **Claim on the floor.** This store takes a file's `claimed_by`/`claimed_at`
+    when it CREATES an item, and ignores them on update. `ApiStore` never does.
+    That asymmetry is deliberate and is the ruling recorded in
+    `a-claim-cannot-survive-the-floors-ci`: here the store is EPHEMERAL — CI
+    deletes it and rebuilds it from `roadmap/items/*.yaml` every run — so the
+    file is the only durable record a claim has, and dropping it made a held item
+    render as `ready` and `sync --check` fail for as long as anybody was working.
+    Against a SERVED store the file is a projection of a store that outlives it,
+    and honouring a claim from a stale checkout would recreate one the store had
+    already released — the resurrection class `roadmap_prunes` exists to prevent.
+
+    One field, two meanings, decided by which store you are holding. Stated here
+    because it is not guessable from the field's name.
+
     Owns its connection and closes it, so a caller can use it as a context
     manager and a test does not leak file handles into the next test.
     """
@@ -260,6 +274,10 @@ class LocalStore:
             payload["id"] = store.new_id()
             payload["status"] = item.get("status") or "ready"
             payload["created_at"] = now
+            # The claim, on CREATE only, for the same reason as `status` and with
+            # the same asymmetry — see the class docstring's "claim on the floor".
+            payload["claimed_by"] = item.get("claimed_by")
+            payload["claimed_at"] = item.get("claimed_at")
             names = ", ".join(payload)
             marks = ", ".join("?" for _ in payload)
             self._conn.execute(
@@ -326,11 +344,23 @@ class LocalStore:
             raise StoreError(f"no such item: {key}")
         now = _utcnow_iso()
         done_at = row["done_at"] or (now if status == "done" else None)
-        self._conn.execute(
-            "UPDATE roadmap_items SET status = ?, done_at = ?, updated_at = ?"
-            " WHERE key = ?",
-            (status, done_at, now, key),
-        )
+        if status == "done":
+            # Finishing drops the hold, matching the served path — and matching
+            # what the CLI already prints ("done also drops the claim"), which it
+            # printed here while nothing happened. Finishing is the one moment a
+            # hold is definitely over, and releasing separately is the step that
+            # never happens because nothing prompts it.
+            self._conn.execute(
+                "UPDATE roadmap_items SET status = ?, done_at = ?, updated_at = ?,"
+                " claimed_by = NULL, claimed_at = NULL WHERE key = ?",
+                (status, done_at, now, key),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE roadmap_items SET status = ?, done_at = ?, updated_at = ?"
+                " WHERE key = ?",
+                (status, done_at, now, key),
+            )
         return self.get_item(key) or {}
 
     def delete_item(self, key: str) -> bool:

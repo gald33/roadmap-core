@@ -899,7 +899,16 @@ def cmd_push(args: argparse.Namespace) -> int:
         }
         try:
             if local is not None:
-                local.upsert_item(payload)
+                # The claim goes to the LOCAL store only. Its store is ephemeral
+                # — CI rebuilds it from these files every run — so the file is
+                # the only durable record a claim has. The served store outlives
+                # the checkout, where the same move would recreate a claim it had
+                # already released. See `LocalStore`'s "claim on the floor".
+                local.upsert_item(dict(
+                    payload,
+                    claimed_by=item.get("claimed_by"),
+                    claimed_at=item.get("claimed_at"),
+                ))
             else:
                 _api("PUT", f"/admin/roadmap/{key}", payload)
         except stores.Pruned:
@@ -1000,7 +1009,15 @@ def cmd_status(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     if args.status == "done":
-        print("done also drops the claim — `roadmap.py prune` when you are ready to clear it")
+        # The store drops the hold; the FILE has to lose it too, or the next
+        # push puts it straight back. On the floor that is not a cosmetic lag —
+        # the file is where a claim durably lives there, so a stale block in it
+        # is the claim, and `sync --check` goes red on an item nobody holds.
+        # Projected here rather than left to `pull`, which is a served-store
+        # command a floor project never runs.
+        with switchboard_write_lock(args.key):
+            _claim_projected(args.key, None)
+        print("done also drops the claim — `roadmap prune` when you are ready to clear it")
         # No lease to drop here any more. This used to release the long-lived
         # mirror, which the store's `done` side effect would otherwise leave
         # reading as "claimed and alive" for up to four hours after the roadmap

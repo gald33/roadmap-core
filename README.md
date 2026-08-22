@@ -108,6 +108,17 @@ FAIL  store       roadmap/roadmap.db holds 0 items while roadmap/items/ holds 7.
                   Seed it: `roadmap push`
 ```
 
+**Who owns a claim depends on which store you have.** On the SQLite floor the
+file is authoritative: CI rebuilds the store from `roadmap/items/*.yaml` every
+run, so `push` takes a file's `claim` when it CREATES the item — otherwise a
+held item renders as `ready` and `sync --check` fails for as long as anybody is
+working. Against a served store the file is a *projection* of a store that
+outlives the checkout, so a claim in a file is never pushed: a stale clone would
+recreate one the store had already released. Either way `push` ignores it on
+UPDATE, because the store is the live record of who holds what.
+
+Not guessable from the field's name, which is why it is written down here.
+
 **Two things that are conventions rather than choices**, both found by doing
 this rather than by reading the code:
 
