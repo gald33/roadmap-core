@@ -12,8 +12,10 @@ Claim before starting: `roadmap claim <key>`
 
 **In priority order, most important first.** An item with no marker carries no stated priority — take it as unjudged, not as low. The order within a band is alphabetical and means nothing.
 
+- `now` **`a-claim-cannot-survive-the-floors-ci`** — On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
 - `now` **`cli-messages-name-a-script-that-does-not-exist`** — Finish the job on the CLI's own messages — fourteen still name roadmap.py
   - ↔ related: **`credential-error-names-one-repos-secret`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
+- `now` **`nothing-tells-an-adopter-their-setup-is-broken`** — Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
 - `next` **`artifact-namespaces-are-one-projects`** — Let a project declare its own artifact namespaces instead of inheriting seven
 - `next` **`credential-error-names-one-repos-secret`** — Stop the db source asking an adopter for a credential only one company mints
   - ↔ related: **`cli-messages-name-a-script-that-does-not-exist`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
@@ -36,16 +38,98 @@ _Nothing blocked._
 
 ```mermaid
 graph TD
+  a_claim_cannot_survive_the_floors_ci["On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore"]
   arcs_md_path_is_not_configurable["Decide whether ARCS.md at the repository root is the contract or an accident"]
   artifact_namespaces_are_one_projects["Let a project declare its own artifact namespaces instead of inheriting seven"]
   cli_messages_name_a_script_that_does_not_exist["Finish the job on the CLI's own messages — fourteen still name roadmap.py"]
   credential_error_names_one_repos_secret["Stop the db source asking an adopter for a credential only one company mints"]
   generated_file_points_at_an_uncreated_readme["Create the roadmap/README.md the generated files and the validator both cite"]
+  nothing_tells_an_adopter_their_setup_is_broken["Nothing answers 'is this project's roadmap setup working?' — add `doctor` and `--version`"]
   roadmap_core_runs_its_own_roadmap["Run this package's own backlog on this package"]
   cli_messages_name_a_script_that_does_not_exist -.- credential_error_names_one_repos_secret
 ```
 
 ## Items
+
+### `a-claim-cannot-survive-the-floors-ci`
+
+- **title:** On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
+- **status:** ready
+- **arc:** adoptable-by-anyone
+- **priority:** now
+- **refs:**
+  - `roadmap_core/cli.py`
+  - `roadmap_core/stores.py`
+  - `.github/workflows/roadmap.yml`
+  - `templates/roadmap.yml`
+
+<details><summary>evidence</summary>
+
+> FOUND 2026-08-22 BY FOLLOWING THIS REPOSITORY'S OWN PROTOCOL. `roadmap claim`
+> an item, commit the projection it tells you to commit, open a PR — and the
+> `roadmap` check fails with `ARCS.md is stale — run 'roadmap sync'`. Running
+> `sync` does not fix it. Nothing the operator did was wrong.
+>
+> THE MECHANISM. On the floor the store is EPHEMERAL: CI is
+> `push` → `validate` → `sync --check` against a SQLite file that does not exist
+> until `push` creates it. So every rendered artifact in CI comes from a store
+> built moments earlier out of `roadmap/items/*.yaml`.
+>
+> `push` honours a file's `status` when it CREATES an item and ignores it on
+> update — the mitigation against a stale checkout resurrecting finished work.
+> It does not carry `claim` at all, on either path. Reproduced against a fresh
+> store:
+>
+>     file:   claim: {by: claude/adopter-doctor-and-version, at: ...}
+>     store:  claimed_by=None  status=ready
+>
+>     $ roadmap sync --check
+>     ARCS.md is stale — run `roadmap sync`
+>
+>     < `adoptable-by-anyone` · 4 item(s), 3 startable
+>     > `adoptable-by-anyone` · 4 item(s), 4 startable
+>     < | nothing-tells-an-adopter-...  | claimed | now |
+>     > | nothing-tells-an-adopter-...  | ready   | now |
+>
+> So the committed markdown says `claimed` and a fresh push renders `ready`, and
+> the two can never agree while a claim exists. The floor's CI is red for exactly
+> as long as anybody is holding an item — which is to say, whenever the
+> coordination feature this tool exists for is in use.
+>
+> WHY IT WAS INVISIBLE. Both existing adopters hid it from opposite sides.
+> Lucille's store is SERVED and persistent, so a claim lives in the store, `pull`
+> projects it into the file, and the file is a projection rather than a source —
+> the round trip never has to work. Switchboard is on the floor but had no live
+> claim when its ROADMAP.md was last generated. The failure needs the floor AND
+> somebody actually claiming something, which is the first thing a second agent
+> on a floor project would ever do.
+>
+> NOT A ONE-LINE FIX, which is why this is an item and not a follow-up commit.
+> "Honour `claim` on create, like `status`" is the obvious move and it is
+> dangerous on the served path: a push from a checkout predating a release would
+> recreate a claim the store had already dropped, which is the resurrection class
+> this project has been bitten by before and now guards with tombstones. The
+> question to answer first is whether claim-in-the-file is authoritative on the
+> floor and merely a projection when served — two different meanings for one
+> field, decided by store type.
+>
+> ACCEPTANCE:
+>
+>   1. A floor project can claim an item, commit what the CLI tells it to commit,
+>      and have CI pass. Verified by doing exactly that in a scratch project in
+>      `tests/test_adoption.py`, including the `sync --check` step — the loop
+>      test currently claims and releases but never renders in between.
+>   2. The served path still cannot resurrect a released claim from a stale file.
+>      Asserted, not assumed.
+>   3. Whichever way it is decided, `roadmap/README.md` states which side owns
+>      `claim` and under which store, because the answer is not guessable from
+>      the field's name.
+>
+> WORKAROUND UNTIL THEN: release before you commit the markdown, which is what
+> PR #5 did — and which means the floor's claim protocol currently cannot be
+> followed and recorded at the same time.
+
+</details>
 
 ### `arcs-md-path-is-not-configurable`
 
@@ -268,6 +352,102 @@ graph TD
 > `later` because a reader who does not find the file loses an explanation, not a
 > command — everything still works. Doing (1) alone would already be worth it, and
 > is the version to start from.
+
+</details>
+
+### `nothing-tells-an-adopter-their-setup-is-broken`
+
+- **title:** Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
+- **status:** ready
+- **arc:** adoptable-by-anyone
+- **priority:** now
+- **refs:**
+  - `roadmap_core/cli.py`
+  - `tests/test_adoption.py`
+
+<details><summary>evidence</summary>
+
+> MEASURED 2026-08-22 by auditing the two repositories that consume this package
+> and the one that ships it.
+>
+> THE ARC SAYS the failures that matter are the ones that "fail silently, at the
+> moment they most need it, and look like their mistake". This is that failure
+> with no string in it to fix: there is no command an adopter can run to find out
+> whether their setup works, and no way for anyone to find out which version they
+> are running. Verified absent at e715075 — `grep` for `--version`, `doctor` and
+> `__version__` across `roadmap_core/` returns nothing.
+>
+> WHAT IT COST THE ADOPTER I CAN MEASURE. Lucille vendored this package until it
+> became a dependency. The tool crossed intact — a function-level diff of its old
+> in-repo CLI against `roadmap_core/cli.py` shows one function dropped and all 14
+> subcommands present, and Lucille's 196 roadmap tests pass against 0.2.1. What
+> broke was everything the vendoring had been guaranteeing for free:
+>
+>   * NOTHING INSTALLED IT. In a clean worktree of Lucille's `main`,
+>     `python3 scripts/roadmap.py ready` exits 1 with "roadmap-core is not
+>     installed". That is the first command its own contributor guide tells every
+>     agent session to run, and claiming work is a convention rather than a gate
+>     — so this was never an error anybody saw. It was sessions quietly not
+>     claiming, which is the collision the tool exists to prevent.
+>   * TWO INSTALLS DRIFTED, UNDETECTED. Its backend declared `roadmap-core>=0.1.0`
+>     with a lock at **0.1.0** while the published package was **0.2.1**. The
+>     backend's copy and the copy a developer's CLI runs are separate installs;
+>     nothing on either side can report its own version, so nothing could have
+>     noticed. Its schema-parity test was passing against a package its CLI never
+>     used.
+>
+> A `doctor` would have said both in one line. Neither is exotic: "is the package
+> importable, does the repo root resolve where you think, is `roadmap/items/`
+> where the CLI is looking, is the store reachable, which version is this".
+>
+> REPRODUCED WHILE FILING THIS ITEM, which is the strongest evidence in it. Run
+> from this repository's own root, against a store that had never been seeded:
+>
+>     $ ROADMAP_SOURCE=local roadmap validate
+>     ok — 0 item(s), 0 arc(s), no problems
+>     $ ROADMAP_SOURCE=local roadmap ready
+>     nothing ready — everything is claimed, blocked, or done
+>
+> Seven items were sitting in `roadmap/items/` at the time. `local` reads the
+> SQLite store, which is empty until `push` seeds it, so the correct reading of
+> "0 items, no problems" is *"I am pointed at an empty store"* — and what it says
+> instead is `ok`. `ready` then reports the backlog is finished. Both are green,
+> confident and wrong, and the fix is one command (`push`) that nothing suggests
+> because nothing has noticed anything is amiss.
+>
+> That is not a hypothetical adopter. It is this package, in its own checkout,
+> three commands into being used.
+>
+> THE TWO FAILURES THIS PACKAGE ALREADY KNOWS ABOUT are the same shape.
+> `tests/test_adoption.py`'s docstring records them: a CLI that could not find its
+> graph because the path only existed in one company's layout, and a shim at the
+> wrong depth making `push` report *"no item files to push"* — which reads as an
+> empty backlog rather than as a misconfiguration. Both are one line of `doctor`
+> output. That test exists because they were found the expensive way, twice.
+>
+> SCOPE — NOT THE SHIM. An earlier draft of this proposed shipping a
+> `scripts/roadmap.py` template on the theory that every adopter writes one.
+> Checked against the other adopter and it is false: switchboard runs 10 items
+> with **no shim at all** — `ROADMAP_SOURCE=local` plus the `roadmap` console
+> script. A shim is a *served-store* concern (pinning a repo root and a backend
+> URL), not a general one, and templating it would hand the floor's adopters
+> machinery for a problem they do not have — the same reasoning
+> `templates/roadmap.yml` already states about Lucille's 333-line sync workflow.
+>
+> ACCEPTANCE — the point is that a broken setup announces itself, not that the
+> README explains how to check:
+>
+>   1. `roadmap doctor` exits non-zero on a broken setup and names the specific
+>      thing that is wrong, one line each. VERIFIED AGAINST DELIBERATELY BROKEN
+>      PROJECTS — a missing `roadmap/items/`, a repo root resolved somewhere
+>      unexpected, an unreachable served store — not by running it on a healthy
+>      one and seeing it say OK. A doctor that passes everything is the guard
+>      that always fires, inverted.
+>   2. `roadmap --version` reports the installed distribution version.
+>   3. `doctor` reports the version too, because the question "which one is this"
+>      is asked while diagnosing, not before.
+>   4. The adoption test covers `doctor` in its scratch project, so the command
+>      that certifies an adoption is itself certified by the adoption test.
 
 </details>
 

@@ -34,6 +34,7 @@ Commands
     status   move an item's status deliberately (the store owns that field)
     release  give it back
     validate schema, dangling deps, cycles
+    doctor   check that this project's setup actually works
 
 State fields — ``status`` and the claim — are the store's, and a file's value
 for them is honored when the item is first filed and ignored afterwards. A
@@ -1913,6 +1914,236 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 1
 
 
+def installed_version() -> str:
+    """The version of the distribution this module was imported from.
+
+    A source checkout that was never installed has no distribution metadata,
+    which is a legitimate way to run the CLI and must not raise. It is still
+    worth distinguishing in the output: "which version is this" and "there is no
+    package here, you are running a directory" are different answers to the same
+    question, and only one of them can be compared against a pin.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # pragma: no cover - stdlib since 3.8
+        return "unknown"
+    try:
+        return version("roadmap-core")
+    except PackageNotFoundError:
+        return "not installed (running from a source tree)"
+
+
+class _Check:
+    """One question `doctor` asks, and what the answer means.
+
+    `fatal=False` for things worth printing but not worth failing on. A doctor
+    that fails on everything imperfect gets run once and then ignored, which
+    leaves an adopter exactly where they started.
+    """
+
+    __slots__ = ("name", "ok", "detail", "fatal")
+
+    def __init__(self, name: str, ok: bool, detail: str, fatal: bool = True) -> None:
+        self.name, self.ok, self.detail, self.fatal = name, ok, detail, fatal
+
+
+def _check_yaml() -> _Check:
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        return _Check(
+            "pyyaml",
+            False,
+            "not installed — `push`, `pull` and `--source files` all fail on this "
+            "one import. Install the extra: pip install 'roadmap-core[files]'",
+        )
+    return _Check("pyyaml", True, "importable")
+
+
+def _check_repo_root() -> _Check:
+    """Where the CLI thinks the project is, and how it decided.
+
+    The failure this exists for is silent: pointed one directory too high, every
+    path still resolves, `push` reports "no item files to push", and that reads
+    as an empty backlog rather than as a misconfiguration.
+    """
+    pinned = os.environ.get("ROADMAP_REPO_ROOT")
+    if pinned:
+        how = "pinned by ROADMAP_REPO_ROOT"
+    elif (REPO_ROOT / "roadmap" / "items").exists():
+        how = "found by walking up from the working directory"
+    else:
+        return _Check(
+            "repo root",
+            False,
+            f"{REPO_ROOT} — no roadmap/items/ above the working directory, so this "
+            "is the working directory itself, chosen as a fallback. Run from "
+            "inside the project, or set ROADMAP_REPO_ROOT.",
+        )
+    return _Check("repo root", True, f"{REPO_ROOT} ({how})")
+
+
+def _check_items() -> tuple[_Check, int]:
+    if not ITEMS_DIR.is_dir():
+        return (
+            _Check(
+                "items",
+                False,
+                f"{ITEMS_DIR} does not exist. That directory IS the authoring "
+                "format — there is no `roadmap new`, so a project without it has "
+                "nowhere to file work.",
+            ),
+            0,
+        )
+    count = len(list(ITEMS_DIR.glob("*.yaml")))
+    return _Check("items", True, f"{count} file(s) in {ITEMS_DIR}", fatal=False), count
+
+
+def _check_store(source: str, on_disk: int, chosen: bool) -> list[_Check]:
+    """Whether the store the write commands use agrees that work exists.
+
+    THE CHECK THIS COMMAND WAS WRITTEN FOR. `local` reads a SQLite file that is
+    empty until `push` seeds it, and an empty store answers `validate` with
+    "ok — 0 item(s), no problems" and `ready` with "nothing ready". Both are
+    green, confident, and wrong, and the remedy is one command that nothing
+    suggests because nothing has noticed.
+    """
+    if source == "local":
+        checks = [_Check("source", True, "local — a SQLite file, no server needed",
+                         fatal=False)]
+        path = Path(ROADMAP_STORE_PATH)
+        try:
+            with store_for("local") as store:
+                in_store = len(store.items())
+        except Exception as exc:  # noqa: BLE001 - report it, do not raise from a doctor
+            checks.append(_Check("store", False, f"{path} could not be opened: {exc}"))
+            return checks
+        if in_store == 0 and on_disk > 0:
+            checks.append(_Check(
+                "store",
+                False,
+                f"{path} holds 0 items while roadmap/items/ holds {on_disk}. "
+                "Every read command will report an empty backlog and call it ok. "
+                "Seed it: `roadmap push`",
+            ))
+        else:
+            checks.append(_Check("store", True, f"{path} — {in_store} item(s)"))
+        return checks
+
+    # `db` is the built-in default for writes, so a project that has configured
+    # nothing lands here without asking to. Saying FAIL twice at that project
+    # would be describing a served store it never wanted; saying nothing would
+    # hide that an unqualified `claim` is aimed somewhere unreachable. So it is
+    # one warning that names the fork, and it becomes a real failure the moment
+    # somebody actually chooses `db`.
+    if not chosen and not DEFAULT_BACKEND:
+        return [_Check(
+            "source",
+            False,
+            "nothing configured, so writes default to the `db` source and would "
+            "need a backend and a token. For the SQLite floor set "
+            "ROADMAP_SOURCE=local (see templates/roadmap.yml); for a served "
+            "store set LUCILLE_BACKEND_URL and LUCILLE_ADMIN_JWT.",
+            fatal=False,
+        )]
+
+    detail = "db — a served store over the admin API"
+    checks = [_Check("source", True, detail, fatal=False)]
+    if not DEFAULT_BACKEND:
+        checks.append(_Check(
+            "backend url",
+            False,
+            "the db source is selected but no backend URL is set. The published "
+            "package ships no default on purpose — a private hostname is not a "
+            "sensible fallback. Set LUCILLE_BACKEND_URL, or use ROADMAP_SOURCE=local.",
+        ))
+    else:
+        checks.append(_Check("backend url", True, DEFAULT_BACKEND, fatal=False))
+    if not os.environ.get("LUCILLE_ADMIN_JWT", "").strip():
+        checks.append(_Check(
+            "credential",
+            False,
+            "no admin token in the environment, so every db-source command will "
+            "exit before it reaches the network.",
+        ))
+    else:
+        checks.append(_Check("credential", True, "present", fatal=False))
+    return checks
+
+
+def _check_generated() -> list[_Check]:
+    """The committed projections. Absent is a real gap — they are what a reader
+    with no install sees — but never fatal: a project mid-adoption has not run
+    `sync` yet, and failing here would make the first doctor run red for a
+    project doing nothing wrong."""
+    out = []
+    for label, path in (("ROADMAP.md", GENERATED_MD), ("ARCS.md", GENERATED_ARCS_MD)):
+        if path.exists():
+            out.append(_Check(label, True, str(path), fatal=False))
+        else:
+            out.append(_Check(
+                label, False, f"{path} not generated yet — run `roadmap sync`",
+                fatal=False,
+            ))
+    return out
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Answer "is this project's roadmap setup working?" in one command.
+
+    Every check here exists because its absence was paid for. The CLI that could
+    not find its graph, the shim at the wrong depth reporting an empty backlog,
+    two installs a major version apart with nothing able to report its own
+    version, a `local` store nobody had seeded — each was found by someone
+    reading a green, confident, wrong answer and believing it.
+
+    Exit code is the product: non-zero when something is actually broken, so a
+    setup step in CI or a bootstrap script can gate on it rather than on a human
+    reading output.
+    """
+    # "Chosen" means somebody said so — on the command line or in the
+    # environment — as opposed to inheriting the built-in write default. The
+    # distinction changes what an unconfigured db source means, and nothing
+    # downstream can recover it.
+    chosen = bool(_ENV_SOURCE) or "--source" in (sys.argv[1:] or [])
+    source = _write_source(args)
+
+    checks: list[_Check] = [
+        _Check("version", True, f"roadmap-core {installed_version()}", fatal=False),
+        _Check("package", True, str(Path(__file__).resolve().parent), fatal=False),
+        _check_yaml(),
+        _check_repo_root(),
+    ]
+    items_check, on_disk = _check_items()
+    checks.append(items_check)
+    checks.append(_Check(
+        "arcs",
+        True,
+        f"{len(list(ARCS_DIR.glob('*.yaml')))} file(s) in {ARCS_DIR}"
+        if ARCS_DIR.is_dir() else f"{ARCS_DIR} does not exist (optional)",
+        fatal=False,
+    ))
+    checks += _check_store(source, on_disk, chosen)
+    checks += _check_generated()
+
+    width = max(len(c.name) for c in checks)
+    broken = [c for c in checks if not c.ok and c.fatal]
+    for check in checks:
+        mark = "ok  " if check.ok else ("FAIL" if check.fatal else "warn")
+        stream = sys.stderr if not check.ok and check.fatal else sys.stdout
+        print(f"{mark}  {check.name.ljust(width)}  {check.detail}", file=stream)
+
+    if broken:
+        print(
+            f"\n{len(broken)} problem(s) — the commands above will not behave as "
+            "documented until each is resolved.",
+            file=sys.stderr,
+        )
+        return 1
+    print("\nsetup looks complete.")
+    return 0
+
+
 def _add_source(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--source", choices=("db", "files", "local"), default=_ENV_SOURCE or "files",
@@ -1967,6 +2198,12 @@ def _add_compared_source(parser: argparse.ArgumentParser) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    # Before the subparsers, and deliberately answerable without one: "which
+    # version is this" is asked when two installs are suspected of disagreeing,
+    # and at that moment every subcommand is under suspicion too.
+    parser.add_argument(
+        "--version", action="version", version=f"roadmap-core {installed_version()}"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_sync = sub.add_parser("sync", help="regenerate roadmap/ROADMAP.md")
@@ -2052,6 +2289,12 @@ def main(argv: list[str] | None = None) -> int:
     p_validate = sub.add_parser("validate", help="schema, dangling deps, cycles")
     _add_source(p_validate)
     p_validate.set_defaults(func=cmd_validate)
+
+    p_doctor = sub.add_parser(
+        "doctor", help="check that this project's roadmap setup actually works"
+    )
+    _add_write_source(p_doctor)
+    p_doctor.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args(argv)
     return args.func(args)

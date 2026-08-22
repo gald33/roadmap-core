@@ -83,6 +83,31 @@ roadmap release first-thing
 The store is one SQLite file at `roadmap/roadmap.db`. There is nothing to
 provision and no migration to run: it is created on first open.
 
+### When something is off, ask
+
+```bash
+roadmap doctor          # is this project's setup actually working?
+roadmap --version       # which roadmap-core is this?
+```
+
+`doctor` exits non-zero when something is genuinely broken and names the remedy.
+Run it first, because **the way this setup fails is by looking fine**: the read
+commands answer from the store, and a store nobody has `push`ed to is empty, so
+`validate` says *"ok — 0 item(s), no problems"* and `ready` says the backlog is
+finished. Both are green, confident and wrong. Same for a command run from
+outside the project: every path still resolves, and `push` reports *"no item
+files to push"*, which reads as an empty backlog rather than as a wrong
+directory.
+
+Those are the two failures `tests/test_adoption.py` was written after, and both
+are one line of `doctor` output:
+
+```
+FAIL  store       roadmap/roadmap.db holds 0 items while roadmap/items/ holds 7.
+                  Every read command will report an empty backlog and call it ok.
+                  Seed it: `roadmap push`
+```
+
 **Two things that are conventions rather than choices**, both found by doing
 this rather than by reading the code:
 
