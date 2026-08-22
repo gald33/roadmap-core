@@ -1915,22 +1915,46 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def installed_version() -> str:
-    """The version of the distribution this module was imported from.
+    """The version of the code that is actually running.
 
-    A source checkout that was never installed has no distribution metadata,
-    which is a legitimate way to run the CLI and must not raise. It is still
-    worth distinguishing in the output: "which version is this" and "there is no
-    package here, you are running a directory" are different answers to the same
-    question, and only one of them can be compared against a pin.
+    Not simply `metadata.version("roadmap-core")`, which reports the version of
+    the INSTALLED DISTRIBUTION whether or not that is what got imported. Those
+    diverge whenever a source tree shadows the install — `PYTHONPATH=.` in a
+    checkout, an editable install left pointing at a directory that moved, a
+    `sys.path` entry a wrapper script prepended. In every one of those the
+    distribution's metadata is still perfectly readable and describes a copy of
+    the code nobody is executing.
+
+    That is a small inaccuracy in most commands and a disqualifying one here.
+    This function exists because two installs at different versions could not be
+    told apart; a version string that can name the wrong one reintroduces the
+    problem it was added to solve. Measured 2026-08-22 in this repository:
+    `doctor` reported `0.2.1` while running 0.2.2 from a checkout.
+
+    So the location is compared, and a mismatch is stated rather than resolved —
+    which one is "right" depends on what the caller meant, and printing both is
+    the only answer that cannot be wrong.
     """
     try:
-        from importlib.metadata import PackageNotFoundError, version
+        from importlib.metadata import PackageNotFoundError, distribution
     except ImportError:  # pragma: no cover - stdlib since 3.8
         return "unknown"
+
+    running_from = Path(__file__).resolve().parent
     try:
-        return version("roadmap-core")
+        dist = distribution("roadmap-core")
     except PackageNotFoundError:
-        return "not installed (running from a source tree)"
+        return f"not installed (running from {running_from})"
+
+    declared = dist.version
+    try:
+        installed_at = Path(str(dist.locate_file("roadmap_core"))).resolve()
+    except Exception:  # noqa: BLE001 - a path we cannot resolve is a mismatch we cannot rule out
+        return declared
+
+    if installed_at == running_from:
+        return declared
+    return f"{declared} installed, but running from {running_from}"
 
 
 class _Check:
