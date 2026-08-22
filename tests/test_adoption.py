@@ -30,6 +30,7 @@ empty backlog for an afternoon.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -373,3 +374,40 @@ def test_the_version_is_answerable_without_a_subcommand(project):
 
     assert result.returncode == 0
     assert "roadmap-core" in result.stdout
+
+
+def test_the_version_names_the_code_that_is_running_not_the_one_installed(
+    project, tmp_path
+):
+    """A shadowed install must not be reported as the running one.
+
+    `metadata.version()` reads the INSTALLED distribution whether or not that is
+    what got imported, and the two diverge on `PYTHONPATH=.` in a checkout, an
+    editable install pointing at a moved directory, or any wrapper that prepends
+    to `sys.path`. Measured in this repository on 2026-08-22: `doctor` printed
+    `0.2.1` while running 0.2.2 from a checkout.
+
+    This is the one command where that is disqualifying rather than untidy — it
+    exists BECAUSE two installs at different versions could not be told apart, so
+    a version string able to name the wrong one reintroduces its own subject.
+
+    Done by really shadowing the package rather than by patching `metadata`: a
+    copy at a path nobody would mistake for the install, imported by putting it
+    first on `PYTHONPATH`.
+    """
+    shadow = tmp_path / "shadow"
+    shutil.copytree(PACKAGE_ROOT / "roadmap_core", shadow / "roadmap_core")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(shadow)
+    env["ROADMAP_SOURCE"] = "local"
+    result = subprocess.run(
+        [sys.executable, "-m", "roadmap_core.cli", "--version"],
+        cwd=project, env=env, capture_output=True, text=True, timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert str(shadow / "roadmap_core") in result.stdout, (
+        "the version must name where the running code came from when that is not "
+        f"the installed distribution — got: {result.stdout!r}"
+    )
