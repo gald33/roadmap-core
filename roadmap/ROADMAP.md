@@ -15,7 +15,6 @@ Claim before starting: `roadmap claim <key>`
 - `now` **`a-claim-cannot-survive-the-floors-ci`** — On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
 - `now` **`cli-messages-name-a-script-that-does-not-exist`** — Finish the job on the CLI's own messages — fourteen still name roadmap.py
   - ↔ related: **`credential-error-names-one-repos-secret`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
-- `now` **`nothing-tells-an-adopter-their-setup-is-broken`** — Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
 - `next` **`artifact-namespaces-are-one-projects`** — Let a project declare its own artifact namespaces instead of inheriting seven
 - `next` **`credential-error-names-one-repos-secret`** — Stop the db source asking an adopter for a credential only one company mints
   - ↔ related: **`cli-messages-name-a-script-that-does-not-exist`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
@@ -358,7 +357,7 @@ graph TD
 ### `nothing-tells-an-adopter-their-setup-is-broken`
 
 - **title:** Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
-- **status:** ready
+- **status:** done
 - **arc:** adoptable-by-anyone
 - **priority:** now
 - **refs:**

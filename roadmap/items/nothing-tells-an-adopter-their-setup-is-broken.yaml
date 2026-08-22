@@ -1,6 +1,6 @@
 id: nothing-tells-an-adopter-their-setup-is-broken
 title: Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
-status: ready
+status: done
 arc: adoptable-by-anyone
 priority: now
 claim: null
