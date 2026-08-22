@@ -12,8 +12,10 @@ Claim before starting: `roadmap claim <key>`
 
 **In priority order, most important first.** An item with no marker carries no stated priority — take it as unjudged, not as low. The order within a band is alphabetical and means nothing.
 
+- `now` **`a-claim-cannot-survive-the-floors-ci`** — On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
 - `now` **`cli-messages-name-a-script-that-does-not-exist`** — Finish the job on the CLI's own messages — fourteen still name roadmap.py
   - ↔ related: **`credential-error-names-one-repos-secret`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
+- `now` **`nothing-tells-an-adopter-their-setup-is-broken`** — Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
 - `next` **`artifact-namespaces-are-one-projects`** — Let a project declare its own artifact namespaces instead of inheriting seven
 - `next` **`credential-error-names-one-repos-secret`** — Stop the db source asking an adopter for a credential only one company mints
   - ↔ related: **`cli-messages-name-a-script-that-does-not-exist`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
@@ -26,11 +28,7 @@ _Nothing deferred._
 
 ## 🔒 Claimed — someone is on these
 
-| item | held by | since |
-|---|---|---|
-| `nothing-tells-an-adopter-their-setup-is-broken` | claude/adopter-doctor-and-version | 2026-08-22T11:08:14Z |
-
-A claim's only trace is this row, so a session that merged or died leaves its hold behind forever and the item silently stops being offered to anyone. If **since** is more than 3 days ago, check whether that branch still has work in flight before assuming the hold is live — if it is merged or gone, `roadmap release <key>`.
+_Nothing claimed._
 
 ## ⛔ Blocked
 
@@ -40,6 +38,7 @@ _Nothing blocked._
 
 ```mermaid
 graph TD
+  a_claim_cannot_survive_the_floors_ci["On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore"]
   arcs_md_path_is_not_configurable["Decide whether ARCS.md at the repository root is the contract or an accident"]
   artifact_namespaces_are_one_projects["Let a project declare its own artifact namespaces instead of inheriting seven"]
   cli_messages_name_a_script_that_does_not_exist["Finish the job on the CLI's own messages — fourteen still name roadmap.py"]
@@ -51,6 +50,86 @@ graph TD
 ```
 
 ## Items
+
+### `a-claim-cannot-survive-the-floors-ci`
+
+- **title:** On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore
+- **status:** ready
+- **arc:** adoptable-by-anyone
+- **priority:** now
+- **refs:**
+  - `roadmap_core/cli.py`
+  - `roadmap_core/stores.py`
+  - `.github/workflows/roadmap.yml`
+  - `templates/roadmap.yml`
+
+<details><summary>evidence</summary>
+
+> FOUND 2026-08-22 BY FOLLOWING THIS REPOSITORY'S OWN PROTOCOL. `roadmap claim`
+> an item, commit the projection it tells you to commit, open a PR — and the
+> `roadmap` check fails with `ARCS.md is stale — run 'roadmap sync'`. Running
+> `sync` does not fix it. Nothing the operator did was wrong.
+>
+> THE MECHANISM. On the floor the store is EPHEMERAL: CI is
+> `push` → `validate` → `sync --check` against a SQLite file that does not exist
+> until `push` creates it. So every rendered artifact in CI comes from a store
+> built moments earlier out of `roadmap/items/*.yaml`.
+>
+> `push` honours a file's `status` when it CREATES an item and ignores it on
+> update — the mitigation against a stale checkout resurrecting finished work.
+> It does not carry `claim` at all, on either path. Reproduced against a fresh
+> store:
+>
+>     file:   claim: {by: claude/adopter-doctor-and-version, at: ...}
+>     store:  claimed_by=None  status=ready
+>
+>     $ roadmap sync --check
+>     ARCS.md is stale — run `roadmap sync`
+>
+>     < `adoptable-by-anyone` · 4 item(s), 3 startable
+>     > `adoptable-by-anyone` · 4 item(s), 4 startable
+>     < | nothing-tells-an-adopter-...  | claimed | now |
+>     > | nothing-tells-an-adopter-...  | ready   | now |
+>
+> So the committed markdown says `claimed` and a fresh push renders `ready`, and
+> the two can never agree while a claim exists. The floor's CI is red for exactly
+> as long as anybody is holding an item — which is to say, whenever the
+> coordination feature this tool exists for is in use.
+>
+> WHY IT WAS INVISIBLE. Both existing adopters hid it from opposite sides.
+> Lucille's store is SERVED and persistent, so a claim lives in the store, `pull`
+> projects it into the file, and the file is a projection rather than a source —
+> the round trip never has to work. Switchboard is on the floor but had no live
+> claim when its ROADMAP.md was last generated. The failure needs the floor AND
+> somebody actually claiming something, which is the first thing a second agent
+> on a floor project would ever do.
+>
+> NOT A ONE-LINE FIX, which is why this is an item and not a follow-up commit.
+> "Honour `claim` on create, like `status`" is the obvious move and it is
+> dangerous on the served path: a push from a checkout predating a release would
+> recreate a claim the store had already dropped, which is the resurrection class
+> this project has been bitten by before and now guards with tombstones. The
+> question to answer first is whether claim-in-the-file is authoritative on the
+> floor and merely a projection when served — two different meanings for one
+> field, decided by store type.
+>
+> ACCEPTANCE:
+>
+>   1. A floor project can claim an item, commit what the CLI tells it to commit,
+>      and have CI pass. Verified by doing exactly that in a scratch project in
+>      `tests/test_adoption.py`, including the `sync --check` step — the loop
+>      test currently claims and releases but never renders in between.
+>   2. The served path still cannot resurrect a released claim from a stale file.
+>      Asserted, not assumed.
+>   3. Whichever way it is decided, `roadmap/README.md` states which side owns
+>      `claim` and under which store, because the answer is not guessable from
+>      the field's name.
+>
+> WORKAROUND UNTIL THEN: release before you commit the markdown, which is what
+> PR #5 did — and which means the floor's claim protocol currently cannot be
+> followed and recorded at the same time.
+
+</details>
 
 ### `arcs-md-path-is-not-configurable`
 
@@ -279,10 +358,9 @@ graph TD
 ### `nothing-tells-an-adopter-their-setup-is-broken`
 
 - **title:** Nothing answers "is this project's roadmap setup working?" — add `doctor` and `--version`
-- **status:** claimed
+- **status:** ready
 - **arc:** adoptable-by-anyone
 - **priority:** now
-- **claimed by:** claude/adopter-doctor-and-version (since 2026-08-22T11:08:14Z)
 - **refs:**
   - `roadmap_core/cli.py`
   - `tests/test_adoption.py`

@@ -19,7 +19,7 @@ The narrative layer above `roadmap/ROADMAP.md`: *why* each theme is still open. 
 
 ### 🟠 The residue of the repo this came from, on surfaces an adopter reads
 
-`adoptable-by-anyone` · 4 item(s), 3 startable
+`adoptable-by-anyone` · 5 item(s), 5 startable
 
 `https://github.com/gald33/roadmap-core/pull/1` · `https://github.com/gald33/roadmap-core/pull/2`
 
@@ -43,8 +43,9 @@ strings without the guard is how the count went from four to eighteen.
 
 | item | status | priority |
 |---|---|---|
+| `a-claim-cannot-survive-the-floors-ci` | ready | now |
 | `cli-messages-name-a-script-that-does-not-exist` | ready | now |
-| `nothing-tells-an-adopter-their-setup-is-broken` | claimed | now |
+| `nothing-tells-an-adopter-their-setup-is-broken` | ready | now |
 | `artifact-namespaces-are-one-projects` | ready | next |
 | `credential-error-names-one-repos-secret` | ready | next |
 

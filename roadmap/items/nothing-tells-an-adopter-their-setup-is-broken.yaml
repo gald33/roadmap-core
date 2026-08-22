@@ -3,9 +3,7 @@ title: Nothing answers "is this project's roadmap setup working?" — add `docto
 status: ready
 arc: adoptable-by-anyone
 priority: now
-claim:
-  by: claude/adopter-doctor-and-version
-  at: '2026-08-22T11:08:14Z'
+claim: null
 blocked_on: []
 refs:
 - 'roadmap_core/cli.py'
