@@ -1,0 +1,44 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/opt/python@3.11/bin/python3.11 -m repoctx update --from-claude-hook 2>/dev/null || python3 -m repoctx update --from-claude-hook 2>/dev/null || true"
+          }
+        ],
+        "matcher": "Edit|Write|MultiEdit"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/opt/python@3.11/bin/python3.11 -m repoctx hook tool-use 2>/dev/null || python3 -m repoctx hook tool-use 2>/dev/null || true"
+          }
+        ],
+        "matcher": "Read|Edit|Write|MultiEdit"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/opt/python@3.11/bin/python3.11 -m repoctx hook prompt-nudge 2>/dev/null || python3 -m repoctx hook prompt-nudge 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/opt/python@3.11/bin/python3.11 -m repoctx hook stop-check 2>/dev/null || python3 -m repoctx hook stop-check 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,3 +10,9 @@ dist/
 # Derived: `push` rebuilds it from the committed YAML on first open, and a
 # binary file in git conflicts on every claim.
 roadmap/roadmap.db
+
+# repoctx: local index + feedback state, per-machine. The project-level config
+# (.claude/settings.json, .mcp.json) IS committed so the hooks travel with the
+# repo; only the generated state is ignored.
+.repoctx/
+.claude/*.local.json
