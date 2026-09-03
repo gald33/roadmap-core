@@ -1,4 +1,7 @@
 {
+  "enabledMcpjsonServers": [
+    "repoctx"
+  ],
   "hooks": {
     "PostToolUse": [
       {
