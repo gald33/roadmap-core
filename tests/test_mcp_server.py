@@ -377,3 +377,26 @@ def test_a_systemexit_escaping_the_handler_still_leaves_the_loop_running(monkeyp
     frames = _rpc({"jsonrpc": "2.0", "id": 1, "method": "ping"})
     assert len(frames) == 1
     assert frames[0]["error"]["code"] == mcp_server.JSONRPC_INTERNAL_ERROR
+
+
+# --- the entry point ----------------------------------------------------------
+
+
+def test_help_and_version_answer_instead_of_blocking_on_stdin(capsys):
+    """`main` used to ignore argv and fall through to reading stdin, so
+    `roadmap-mcp --help` hung with no output — and so did a mistyped flag in an
+    `.mcp.json`, which surfaced as a server that never finished a handshake."""
+    assert mcp_server.main(["--help"]) == 0
+    assert "usage: roadmap-mcp" in capsys.readouterr().out
+
+    assert mcp_server.main(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == cli.installed_version()
+
+
+def test_an_unrecognised_argument_is_refused_on_stderr(capsys):
+    """Non-zero, and said on stderr: the client is owed a reason it can see, and
+    stdout is the protocol even on the path that never gets to speak it."""
+    assert mcp_server.main(["--sorce", "files"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unrecognised argument: --sorce" in captured.err

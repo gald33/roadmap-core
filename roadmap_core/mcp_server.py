@@ -617,7 +617,43 @@ def serve_stdio(stdin: Any = None, stdout: Any = None) -> None:
             stdout.flush()
 
 
-def main() -> int:
+USAGE = """usage: roadmap-mcp
+
+Serve the roadmap as MCP tools over stdio. Reads newline-delimited JSON-RPC on
+stdin and writes one frame per line to stdout, so it is normally started by an
+MCP client rather than run by hand.
+
+  -h, --help     this message
+  -V, --version  the installed roadmap-core version
+
+environment:
+  ROADMAP_SOURCE     files (the default for reads) | local | db. Writes never
+                     go to files; an environment saying so writes to db.
+  ROADMAP_STORE      path to the SQLite store used by source=local
+  ROADMAP_REPO_ROOT  the checkout to resolve roadmap/items against
+
+Seven tools: ready, list, show, validate, claim, release, set_status."""
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args:
+        # A stdio server is launched by a client and takes no arguments, so
+        # anything here is a misconfiguration. It used to be answered by
+        # ignoring argv and blocking on stdin, which is the worst available
+        # response to a typo in an `.mcp.json`: the client sees a server that
+        # never completes a handshake, and nothing anywhere says why. `--help`
+        # from a terminal hung the same way.
+        if args[0] in ("-h", "--help"):
+            # stdout, because this path never serves — no frames follow it.
+            print(USAGE)
+            return 0
+        if args[0] in ("-V", "--version"):
+            print(installed_version())
+            return 0
+        print(f"roadmap-mcp: unrecognised argument: {args[0]}\n", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
     serve_stdio()
     return 0
 
