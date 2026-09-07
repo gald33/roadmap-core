@@ -303,3 +303,77 @@ def test_set_status_verifying_keeps_the_claim():
     _call("set_status", key="alpha", status="verifying")
     shown, _ = _call("show", key="alpha")
     assert shown["claimed_by"] == "tester"
+
+
+# --- the load path reports failure without ending the session -----------------
+#
+# `cli.load` raises SystemExit for every graph problem it finds, and SystemExit
+# is not an `Exception`. The reads call `load` directly rather than through
+# `_capture`, so nothing between them and the interpreter catches it. These
+# monkeypatch `load` rather than pointing a read at a broken `roadmap/items/`,
+# because this file may not use `source="files"` at all — the isolation job runs
+# it with PyYAML absent. What is being pinned is the exception type, and that
+# does not need a real YAML file to be raised.
+
+
+@pytest.mark.parametrize("tool", ["ready", "list", "validate", "show"])
+def test_an_unreadable_graph_is_an_error_frame_not_a_dead_server(tool, monkeypatch):
+    """The bug this guards: a single malformed item file used to take the whole
+    server down, and `validate` — the tool whose entire job is to report that
+    file — went down with it."""
+    def explode(*_args, **_kwargs):
+        raise SystemExit("roadmap/items/oops.yaml: invalid YAML: mapping values not allowed")
+
+    monkeypatch.setattr(mcp_server, "load", explode)
+    arguments = {"key": "alpha"} if tool == "show" else {}
+    frames = _rpc(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": tool, "arguments": arguments}},
+        # The point of the test is this second frame: the session outlives it.
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    )
+    assert len(frames) == 2, "the server stopped answering after an unreadable graph"
+    payload = json.loads(frames[0]["result"]["content"][0]["text"])
+    assert frames[0]["result"]["isError"] is True
+    assert payload["error"] == "graph_unreadable"
+    assert "oops.yaml" in payload["detail"]
+    assert frames[1]["id"] == 2
+
+
+def test_a_missing_pyyaml_names_the_install_that_fixes_it(monkeypatch):
+    """`load` turns its own ImportError into SystemExit, so the missing-PyYAML
+    case arrives as one. It still has to arrive carrying the install."""
+    def explode(*_args, **_kwargs):
+        raise SystemExit("PyYAML required for --source files (pip install pyyaml)")
+
+    monkeypatch.setattr(mcp_server, "load", explode)
+    monkeypatch.setattr(mcp_server.importlib.util, "find_spec", lambda name: None)
+    payload, is_error = _call("ready")
+    assert is_error is True
+    assert payload["error"] == "graph_unreadable"
+    assert payload["fix"] == "pip install 'roadmap-core[files]'"
+
+
+def test_a_readable_graph_carries_no_install_advice(monkeypatch):
+    """The `fix` key is conditional. A malformed file in a checkout that HAS
+    PyYAML is an edit, not an install, and saying otherwise sends the reader to
+    the wrong place."""
+    def explode(*_args, **_kwargs):
+        raise SystemExit("roadmap/items/oops.yaml: expected a mapping at the top level")
+
+    monkeypatch.setattr(mcp_server, "load", explode)
+    monkeypatch.setattr(mcp_server.importlib.util, "find_spec", lambda name: object())
+    payload, _ = _call("validate")
+    assert "fix" not in payload
+
+
+def test_a_systemexit_escaping_the_handler_still_leaves_the_loop_running(monkeypatch):
+    """Defence in depth for the loop itself, not the tools/call branch: a
+    SystemExit raised outside a tool must not end the session either."""
+    def explode(_request):
+        raise SystemExit("something above the tools")
+
+    monkeypatch.setattr(mcp_server, "handle_request", explode)
+    frames = _rpc({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert len(frames) == 1
+    assert frames[0]["error"]["code"] == mcp_server.JSONRPC_INTERNAL_ERROR

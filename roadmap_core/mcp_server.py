@@ -46,6 +46,7 @@ and ``ROADMAP_SOURCE`` overrides that for both halves, as it does for the CLI.
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
@@ -524,7 +525,10 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
         except ImportError as exc:
             # The `files` source needs PyYAML and the bare package does not ship
             # it. Named rather than folded into `bad_request`, because the fix is
-            # an install and nothing about the request was wrong.
+            # an install and nothing about the request was wrong. Note that
+            # `cli.load` converts its own missing-PyYAML ImportError into a
+            # SystemExit, so that particular case lands in the branch below;
+            # this one remains for an ImportError raised anywhere else.
             return _response(request_id, _tool_result(
                 {"error": "missing_dependency", "detail": str(exc),
                  "fix": "pip install 'roadmap-core[files]'"}, is_error=True))
@@ -543,6 +547,29 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             # that is genuinely malformed.
             return _response(request_id, _tool_result(
                 {"error": "store_unavailable", "detail": str(exc)}, is_error=True))
+        except SystemExit as exc:
+            # THE READS ARE NOT WRAPPED IN `_capture`, AND THIS IS THE SEAM.
+            # `cli.load` reports every graph problem by raising SystemExit —
+            # unreadable YAML, an id that disagrees with its filename, a
+            # non-kebab-case key, PyYAML missing for `source=files`. SystemExit
+            # descends from BaseException, so it passes straight through every
+            # `except Exception` between here and the top and ends the process.
+            # On a stdio server that is not an exit: it is the client's pipe
+            # closing mid-session, with the diagnosis going to a stderr nobody
+            # is reading. It bites hardest on `validate`, whose whole job is to
+            # report exactly these problems — an agent asking what is wrong with
+            # the graph would get a dead server instead of the answer.
+            #
+            # The writes never reach here because `_capture` already catches
+            # SystemExit for the same reason. This is the reads' half of it.
+            detail = str(exc.code) if exc.code not in (None, 0) else "the graph could not be read"
+            payload = {"error": "graph_unreadable", "detail": detail}
+            # Semantic rather than sniffed out of the message: if PyYAML is not
+            # importable at all, a `files` read cannot have failed for any other
+            # reason, and the fix is an install rather than an edit.
+            if importlib.util.find_spec("yaml") is None:
+                payload["fix"] = "pip install 'roadmap-core[files]'"
+            return _response(request_id, _tool_result(payload, is_error=True))
         except Exception as exc:  # noqa: BLE001 - a tool bug must not kill the server
             log("tool error:\n" + traceback.format_exc())
             return _response(request_id, _tool_result(
@@ -577,7 +604,11 @@ def serve_stdio(stdin: Any = None, stdout: Any = None) -> None:
             continue
         try:
             response = handle_request(request)
-        except Exception:  # noqa: BLE001 - one bad request must not end the session
+        except (Exception, SystemExit):  # noqa: BLE001 - one bad request must not end the session
+            # SystemExit named explicitly alongside Exception: it is not an
+            # `Exception` subclass, and a `sys.exit` reached from anywhere under
+            # here is a request that failed, never a server that should stop
+            # answering the ones after it.
             log("unhandled error:\n" + traceback.format_exc())
             response = _error(
                 request.get("id"), JSONRPC_INTERNAL_ERROR, "internal error (see stderr)")
