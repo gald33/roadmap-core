@@ -6,6 +6,18 @@
         "-c",
         "for py in /opt/homebrew/opt/python@3.11/bin/python3.11 python3 python; do command -v \"$py\" >/dev/null 2>&1 && \"$py\" -c \"import mcp.server.fastmcp, repoctx.mcp_server\" >/dev/null 2>&1 && exec \"$py\" -m repoctx.mcp_server; done; command -v uv >/dev/null 2>&1 && exec uv run --no-project --with repoctx-mcp python -m repoctx.mcp_server; python3 -m pip install --quiet repoctx-mcp 1>&2 && exec python3 -m repoctx.mcp_server; echo \"repoctx: could not launch the MCP server (no Python with repoctx-mcp, no uv, and pip install failed). Fix with: pip install repoctx-mcp\" >&2; exit 1"
       ]
+    },
+    "switchboard": {
+      "command": "sh",
+      "env": {
+        "SWITCHBOARD_URL": "https://switchboard.lucille-ai.com",
+        "SWITCHBOARD_WORKSPACE": "gald33/roadmap-core",
+        "SWITCHBOARD_TOKEN": "sb_public_lucille"
+      },
+      "args": [
+        "-c",
+        "command -v switchboard-mcp >/dev/null 2>&1 && exec switchboard-mcp; command -v uvx >/dev/null 2>&1 && exec uvx --from 'agent-switchboard[crypto]' switchboard-mcp; echo 'switchboard: switchboard-mcp not found and uvx unavailable; pip install '\"'\"'agent-switchboard[crypto]'\"'\"'' >&2; exit 127"
+      ]
     }
   }
 }
