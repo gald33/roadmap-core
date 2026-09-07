@@ -1,6 +1,6 @@
 [project]
 name = "roadmap-core"
-version = "0.2.3"
+version = "0.3.0"
 description = "The roadmap work-item and arc graph: status derivation, validation, and markdown rendering. Stdlib-only, so any repo can adopt it without adopting a backend."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -63,6 +63,11 @@ dev = ["pytest>=8"]
 # A dependency-free library whose tool you cannot get is not an adoptable tool.
 [project.scripts]
 roadmap = "roadmap_core.cli:main"
+# The MCP bridge, and no extra to install it: `mcp_server.py` speaks the stdio
+# protocol in stdlib rather than taking the SDK, so it is already installed
+# wherever the package is. An extra here would be an extra that is always
+# empty — and one an adopter could forget, for a server that needs nothing.
+roadmap-mcp = "roadmap_core.mcp_server:main"
 
 [project.urls]
 Source = "https://github.com/gald33/roadmap-core"

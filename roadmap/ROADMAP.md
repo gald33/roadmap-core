@@ -37,6 +37,7 @@ _Nothing blocked._
 ```mermaid
 graph TD
   a_claim_cannot_survive_the_floors_ci["On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore"]
+  an_agent_cannot_reach_the_roadmap["An agent has no way to reach the roadmap — serve it as MCP tools over stdio"]
   arcs_md_path_is_not_configurable["Decide whether ARCS.md at the repository root is the contract or an accident"]
   artifact_namespaces_are_one_projects["Let a project declare its own artifact namespaces instead of inheriting seven"]
   cli_messages_name_a_script_that_does_not_exist["Finish the job on the CLI's own messages — fourteen still name roadmap.py"]
@@ -44,6 +45,7 @@ graph TD
   generated_file_points_at_an_uncreated_readme["Create the roadmap/README.md the generated files and the validator both cite"]
   nothing_tells_an_adopter_their_setup_is_broken["Nothing answers 'is this project's roadmap setup working?' — add `doctor` and `--version`"]
   roadmap_core_runs_its_own_roadmap["Run this package's own backlog on this package"]
+  a_claim_cannot_survive_the_floors_ci -.- an_agent_cannot_reach_the_roadmap
   cli_messages_name_a_script_that_does_not_exist -.- credential_error_names_one_repos_secret
 ```
 
@@ -55,6 +57,8 @@ graph TD
 - **status:** done
 - **arc:** adoptable-by-anyone
 - **priority:** now
+- **related to** (not a dependency — both are startable):
+  - `an-agent-cannot-reach-the-roadmap` — The MCP write tools delegate to `cmd_claim`/`cmd_release`/`cmd_status` rather than talking to the store, so that item's answer — project the claim into `roadmap/items/<key>.yaml`, under the Switchboard write lock, and drop it at `done` — stays the only copy. A second implementation in the MCP layer would be free to drift from it, and this is the one place where that drift would not show up as a failing test.
 - **refs:**
   - `roadmap_core/cli.py`
   - `roadmap_core/stores.py`
@@ -184,6 +188,108 @@ graph TD
 > WORKAROUND UNTIL THEN: release before you commit the markdown, which is what
 > PR #5 did — and which means the floor's claim protocol currently cannot be
 > followed and recorded at the same time.
+
+</details>
+
+### `an-agent-cannot-reach-the-roadmap`
+
+- **title:** An agent has no way to reach the roadmap — serve it as MCP tools over stdio
+- **status:** verifying
+- **arc:** the-floor-as-shipped
+- **priority:** now
+- **related to** (not a dependency — both are startable):
+  - `a-claim-cannot-survive-the-floors-ci` — The MCP write tools delegate to `cmd_claim`/`cmd_release`/`cmd_status` rather than talking to the store, so that item's answer — project the claim into `roadmap/items/<key>.yaml`, under the Switchboard write lock, and drop it at `done` — stays the only copy. A second implementation in the MCP layer would be free to drift from it, and this is the one place where that drift would not show up as a failing test.
+- **refs:**
+  - `roadmap_core/mcp_server.py`
+  - `tests/test_mcp_server.py`
+  - `pyproject.toml`
+  - `README.md`
+
+<details><summary>evidence</summary>
+
+> VERIFIED BY BUILDING IT. This item is filed alongside the branch that implements
+> it, so everything below was run rather than predicted. The one inferred claim is
+> named as inferred, at the end.
+>
+> THE GAP. This package ships a CLI and a library. An agent session — the reader
+> this backlog is written for, and the one the CLI's own messages already address
+> ("call `ready` before starting work", "when you finish or stop: release") — had
+> no way to reach either without a human relaying shell output. The tool that
+> exists to stop two sessions taking the same item could not be called by the
+> sessions.
+>
+> WHAT WAS BUILT. `roadmap_core/mcp_server.py` and a `roadmap-mcp` console script,
+> serving seven tools: ready, list, show, validate, claim, release, set_status.
+>
+> NO SDK, AND SO NO EXTRA — the decision everything else here rests on.
+> `tests.yml`'s isolation job installs `[dev]` and then fails if `app`, `fastapi`,
+> `sqlalchemy` or `yaml` is importable at all, because the graph and the store have
+> to work in a checkout with nothing provisioned. A dependency on `mcp` would end
+> that claim outright, and hiding it behind an extra would only move the failure to
+> whichever environment forgot the extra. The protocol is newline-delimited
+> JSON-RPC over two pipes, so it is written out in stdlib.
+>
+> Proven rather than asserted, in a venv built from the wheel with no extras:
+>
+>     $ pip list --format=freeze
+>     pip==24.0
+>     roadmap-core==0.3.0
+>     setuptools==79.0.1
+>     $ python -c "import importlib.util as u; print([m for m in
+>       ('mcp','yaml','fastapi','sqlalchemy','app') if u.find_spec(m)])"
+>     []
+>
+>     initialize -> proto=2025-06-18  server={'name': 'roadmap', 'version': '0.3.0'}
+>     tools/list -> ready list show validate claim release set_status
+>     ready      -> startable items, read out of the store
+>     claim      -> claimed cli-messages-name-a-script-that-does-not-exist
+>                   projected into roadmap/items/<key>.yaml — run `sync`, then commit
+>
+>     stdout lines: 7   every line a valid JSON-RPC frame: yes   stderr: empty
+>
+> STDOUT IS THE PROTOCOL, which is the whole hazard in delegating writes to a
+> printing CLI: `claim` alone emits four lines, one of them the "when you finish"
+> notice. `_capture` redirects both streams and returns what the CLI said as the
+> tool's own text. The run above is the check that nothing leaked past it.
+>
+> THE DEFECT THIS ITEM ALREADY PAID FOR. `cli.load` reports every graph problem by
+> raising SystemExit — unreadable YAML, an id that disagrees with its filename, a
+> non-kebab-case key, PyYAML missing for `source=files`. SystemExit descends from
+> BaseException, not Exception, so it passed straight through the handler chain and
+> the serve loop and ended the process. Reproduced on a checkout with PyYAML fully
+> installed and one malformed item file:
+>
+>     initialize -> answered
+>     validate   -> no frame; process exits 1, message on a stderr nobody reads
+>
+> `validate` is the tool whose entire job is to report that file, and reads default
+> to `files`, the one source that raises it. The writes were never exposed —
+> `_capture` catches SystemExit for exactly this reason — so the reads were the
+> unguarded half.
+>
+> THE SUITE COULD NOT HAVE CAUGHT IT, which is the part worth keeping.
+> `tests/test_mcp_server.py` may not use `source="files"` at all, because the
+> isolation job runs it with PyYAML absent; every read in it is `local`, which
+> raises ordinary exceptions. The entire class of SystemExit-reported failure was
+> invisible to it, and the default read path was the one untested. The regression
+> tests monkeypatch `load` to raise SystemExit instead, pinning the exception type
+> without needing a YAML file, and each asserts a second frame after the failing
+> one — the session outliving the error is the property, not the error text.
+>
+> ACCEPTANCE — what moves this to `done`:
+>
+>   1. The PR merges. Run against a fresh clone of `main` with the series applied:
+>      151 tests pass, `ruff check .` is clean, and `push` / `validate` /
+>      `sync --check` are unchanged by it.
+>   2. `v0.3.0` is tagged and its GitHub Release published. `publish.yml` refuses a
+>      tag that disagrees with `pyproject.toml`, so the version is the gate.
+>   3. `roadmap-core` 0.3.0 is on PyPI with `roadmap-mcp` among its entry points.
+>   4. An agent in another repository reaches a graph through it. INFERRED, NOT
+>      VERIFIED: the consuming `.mcp.json` is written and waiting on the release,
+>      and nothing here has watched it connect.
+>
+> Status is `verifying` and not `done` for that last reason — the branch that
+> shipped this still owns confirming it landed.
 
 </details>
 

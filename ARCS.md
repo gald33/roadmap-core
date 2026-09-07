@@ -51,7 +51,7 @@ strings without the guard is how the count went from four to eighteen.
 
 ### 🟠 What an adopter actually gets, versus what the docs describe
 
-`the-floor-as-shipped` · 3 item(s), 2 startable
+`the-floor-as-shipped` · 4 item(s), 2 startable
 
 `README.md` · `templates/roadmap.yml`
 
@@ -73,6 +73,7 @@ a virtue exercise; it is the only reader who reliably notices.
 
 | item | status | priority |
 |---|---|---|
+| `an-agent-cannot-reach-the-roadmap` | verifying | now |
 | `roadmap-core-runs-its-own-roadmap` | done | — |
 | `arcs-md-path-is-not-configurable` | ready | later |
 | `generated-file-points-at-an-uncreated-readme` | ready | later |

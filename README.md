@@ -135,6 +135,41 @@ this rather than by reading the code:
 `ROADMAP_SOURCE=local` selects the SQLite store. Without it the CLI expects the
 API store, which is how Lucille runs it — see `roadmap_core.stores`.
 
+### Agents (MCP)
+
+`roadmap-mcp` serves the same graph to a coding agent as MCP tools over stdio —
+`ready`, `list`, `show`, `validate`, `claim`, `release`, `set_status`. Point a
+client at it:
+
+```json
+{
+  "mcpServers": {
+    "roadmap": {
+      "command": "roadmap-mcp",
+      "env": { "ROADMAP_SOURCE": "local" }
+    }
+  }
+}
+```
+
+**There is no extra to install and no SDK underneath.** `mcp_server.py` speaks
+the JSON-RPC protocol in stdlib, so it is present wherever the package is —
+which is the same reason the rest of this package is dependency-free, applied to
+one more caller. An extra would be one an adopter can forget, for a server that
+needs nothing.
+
+**Reads default to the files**, so an agent in a fresh clone can ask what to
+work on with no store, no server and no token. Writes need a store to arbitrate
+them: set `ROADMAP_SOURCE=local` as above, or the write tools expect the API
+store. There is deliberately no `files` write target — a claim nothing
+adjudicated is not a claim, and two agents could each hold the same item.
+
+**A write tells the agent to commit something, and it means it.** `claim`,
+`release` and `set_status` project into `roadmap/items/<key>.yaml`, and on the
+floor that projection *is* the durable record — an unmerged one is a claim no
+other checkout can see. The tool result carries the CLI's own words for this
+under `notes`.
+
 ### CI
 
 Copy `templates/roadmap.yml` to `.github/workflows/roadmap.yml`. That is the
