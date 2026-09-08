@@ -16,3 +16,4 @@ roadmap/roadmap.db
 # repo; only the generated state is ignored.
 .repoctx/
 .claude/*.local.json
+**/.claude/settings.local.json
