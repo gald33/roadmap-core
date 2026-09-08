@@ -194,12 +194,14 @@ graph TD
 ### `an-agent-cannot-reach-the-roadmap`
 
 - **title:** An agent has no way to reach the roadmap — serve it as MCP tools over stdio
-- **status:** verifying
+- **status:** done
 - **arc:** the-floor-as-shipped
 - **priority:** now
 - **related to** (not a dependency — both are startable):
   - `a-claim-cannot-survive-the-floors-ci` — The MCP write tools delegate to `cmd_claim`/`cmd_release`/`cmd_status` rather than talking to the store, so that item's answer — project the claim into `roadmap/items/<key>.yaml`, under the Switchboard write lock, and drop it at `done` — stays the only copy. A second implementation in the MCP layer would be free to drift from it, and this is the one place where that drift would not show up as a failing test.
 - **refs:**
+  - `https://github.com/gald33/roadmap-core/pull/11`
+  - `https://github.com/gald33/roadmap-core/releases/tag/v0.3.0`
   - `roadmap_core/mcp_server.py`
   - `tests/test_mcp_server.py`
   - `pyproject.toml`
@@ -284,12 +286,35 @@ graph TD
 >   2. `v0.3.0` is tagged and its GitHub Release published. `publish.yml` refuses a
 >      tag that disagrees with `pyproject.toml`, so the version is the gate.
 >   3. `roadmap-core` 0.3.0 is on PyPI with `roadmap-mcp` among its entry points.
->   4. An agent in another repository reaches a graph through it. INFERRED, NOT
->      VERIFIED: the consuming `.mcp.json` is written and waiting on the release,
->      and nothing here has watched it connect.
+>   4. An agent in another repository reaches a graph through it. VERIFIED — see
+>      below.
 >
-> Status is `verifying` and not `done` for that last reason — the branch that
-> shipped this still owns confirming it landed.
+> ALL FOUR NOW HOLD. 1 merged as #11 (main 94c3ea8). 2 tagged v0.3.0 and the
+> Release published; `publish.yml` ran on `release: published` and succeeded in
+> 41s. 3 `roadmap-core` 0.3.0 is on PyPI as both wheel and sdist, with
+> `roadmap-mcp = roadmap_core.mcp_server:main` among its entry points.
+>
+> 4 WAS THE ONE STILL INFERRED, and it is the reason this item sat at
+> `verifying` rather than `done`. It has now been watched rather than assumed.
+> A scratch project standing in for a consuming repository, a venv holding
+> nothing but what PyPI serves, and the console script driven over stdio the
+> way a client drives it:
+>
+>     $ pip list --format=freeze
+>     PyYAML==6.0.3
+>     roadmap-core==0.3.0
+>
+>     initialize -> proto=2025-06-18  server={'name': 'roadmap', 'version': '0.3.0'}
+>     tools/list -> ready list show validate claim release set_status
+>     ready      -> ['consumer-can-read-its-own-graph']
+>     list       -> ['consumer-can-read-its-own-graph']
+>     validate   -> answered
+>     stderr: (empty)
+>
+> The item those two calls name is the scratch project's own, authored before
+> the server was started — so what came back is that repository's graph read
+> through the published artifact, not this one's and not a fixture. Installed
+> from PyPI rather than from a checkout, which is the path an adopter takes.
 
 </details>
 
