@@ -73,7 +73,7 @@ a virtue exercise; it is the only reader who reliably notices.
 
 | item | status | priority |
 |---|---|---|
-| `an-agent-cannot-reach-the-roadmap` | verifying | now |
+| `an-agent-cannot-reach-the-roadmap` | done | now |
 | `roadmap-core-runs-its-own-roadmap` | done | — |
 | `arcs-md-path-is-not-configurable` | ready | later |
 | `generated-file-points-at-an-uncreated-readme` | ready | later |
