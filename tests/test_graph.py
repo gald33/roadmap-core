@@ -232,3 +232,109 @@ def test_cli_messages_name_no_path_from_the_extraction_repo():
                 f"cli.py prints {text!r}, naming {bad!r} — a path that exists only in "
                 f"the repository this package was extracted from. Use `graph.CLI`."
             )
+
+
+# --- a claim that is held on purpose is not a claim that was forgotten -------
+
+
+def _held(key, *, status, days_ago, now):
+    """An item claimed `days_ago` by a branch, in `status`."""
+    import datetime as _dt
+
+    return {
+        "key": key,
+        "title": key,
+        "status": status,
+        "blocked_on": [],
+        "evidence": "x",
+        "claimed_by": f"claude/{key}",
+        "claimed_at": (now - _dt.timedelta(days=days_ago)).isoformat(),
+    }
+
+
+def _now():
+    import datetime as _dt
+
+    return _dt.datetime(2026, 9, 14, 12, 0, tzinfo=_dt.timezone.utc)
+
+
+def test_a_verifying_claim_is_not_stale_at_the_base_threshold():
+    """The bug this package had against itself.
+
+    Setting `verifying` PRINTS "verifying does NOT drop the claim — the branch
+    that shipped this still owns confirming it". `ready` then reported that
+    same claim as a "likely finished session that never released" and advised
+    releasing it. Measured in Lucille 2026-09-14 on
+    `closure-tool-fires-but-nothing-is-written`, held 7.8 days; its own claim
+    audit said "Nothing to decide" about the identical row the same day.
+    Releasing it would have stripped the claim from the branch that owns the
+    watch — wrong advice, not merely noisy.
+    """
+    now = _now()
+    by_key = {
+        "claimed": _held("claimed", status="claimed", days_ago=7.8, now=now),
+        "verifying": _held("verifying", status="verifying", days_ago=7.8, now=now),
+    }
+    stale = graph.stale_claims(by_key, now=now)
+    assert [item["key"] for item in stale] == ["claimed"], (
+        "a `verifying` claim held under the verifying threshold must not be "
+        "reported as an abandoned hold"
+    )
+
+
+def test_a_verifying_claim_is_still_reported_once_it_outlives_its_own_window():
+    """Surfacing threshold, never an expiry — reported later, not never.
+
+    A session can ship and die before the effect lands, and that claim is just
+    as abandoned as any other. Excluding `verifying` outright would trade a
+    wrong report for a missing one.
+    """
+    now = _now()
+    by_key = {"v": _held("v", status="verifying", days_ago=20.0, now=now)}
+    stale = graph.stale_claims(by_key, now=now)
+    assert [item["key"] for item in stale] == ["v"]
+    assert stale[0]["claim_threshold_days"] == graph.VERIFYING_CLAIM_DAYS
+
+
+def test_the_verifying_window_is_longer_than_the_base_one():
+    """If these ever cross, the override silently becomes a no-op."""
+    assert graph.VERIFYING_CLAIM_DAYS > graph.STALE_CLAIM_DAYS
+
+
+def test_a_widened_threshold_widens_verifying_too():
+    """`max`, not override: a caller asking for a laxer bar gets it everywhere.
+
+    Otherwise `threshold_days=30` would report a 20-day `verifying` hold while
+    ignoring a 20-day `claimed` one — the laxer request making the stricter
+    answer.
+    """
+    now = _now()
+    by_key = {"v": _held("v", status="verifying", days_ago=20.0, now=now)}
+    assert graph.stale_claims(by_key, now=now, threshold_days=30) == []
+    assert graph.claim_threshold_days(by_key["v"], threshold_days=30) == 30
+
+
+def test_a_narrowed_threshold_does_not_narrow_verifying():
+    """A status that holds on purpose still holds on purpose."""
+    now = _now()
+    by_key = {"v": _held("v", status="verifying", days_ago=7.8, now=now)}
+    assert graph.stale_claims(by_key, now=now, threshold_days=0.1) == []
+
+
+def test_every_other_status_keeps_the_base_threshold():
+    """The override is a named exception, not a general loosening."""
+    now = _now()
+    for status in graph.STATUSES:
+        if status == "verifying":
+            continue
+        item = _held("k", status=status, days_ago=4.0, now=now)
+        assert graph.claim_threshold_days(item) == graph.STALE_CLAIM_DAYS, status
+        assert graph.stale_claims({"k": item}, now=now), status
+
+
+def test_an_unknown_status_keeps_the_base_threshold():
+    """A typo must not silently buy an item a two-week hold."""
+    now = _now()
+    item = _held("k", status="verifyng", days_ago=4.0, now=now)
+    assert graph.claim_threshold_days(item) == graph.STALE_CLAIM_DAYS
+    assert graph.stale_claims({"k": item}, now=now)

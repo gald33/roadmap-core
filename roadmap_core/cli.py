@@ -1295,20 +1295,37 @@ def _stale_claim_notice(by_key: dict[str, dict[str, Any]]) -> None:
     if not stale:
         return
     print(
-        f"\nnote: {len(stale)} claim(s) held longer than {graph.STALE_CLAIM_DAYS}d — "
+        f"\nnote: {len(stale)} claim(s) held longer than expected — "
         f"likely finished sessions that never released:",
         file=sys.stderr,
     )
     for item in stale:
+        # Name the bar this item was actually judged against. A flat
+        # "longer than 3d" header was already wrong for `verifying`, which is
+        # held to a longer one; printing one number for a mixed list just moves
+        # that error rather than fixing it.
+        limit = item.get("claim_threshold_days", graph.STALE_CLAIM_DAYS)
+        status = str(item.get("status") or "")
         print(
             f"  {item['key']} — {item.get('claimed_by')} "
-            f"({item['claim_age_days']:.1f}d ago)",
+            f"({item['claim_age_days']:.1f}d ago, over {limit:g}d"
+            + (f", {status}" if status else "")
+            + ")",
             file=sys.stderr,
         )
     print(
         "  Verify the branch is merged or gone, then `roadmap.py release <key>`.",
         file=sys.stderr,
     )
+    if any(item.get("status") == "verifying" for item in stale):
+        # `release` is the WRONG first move for one of these: the item shipped
+        # and is waiting on an observation, so the usual outcome is that the
+        # effect landed and nobody said so.
+        print(
+            "  For a `verifying` item, `roadmap.py status <key> done` if the effect "
+            "has landed — release only if the watch was abandoned.",
+            file=sys.stderr,
+        )
 
 
 def _own_claims_notice(by_key: dict[str, dict[str, Any]], *, exclude: str = "") -> None:
