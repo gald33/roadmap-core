@@ -1067,12 +1067,39 @@ def compare_sources(
         )
     for key in sorted(set(db) & set(files)):
         d, f = db[key], files[key]
-        if (d.get("status") == "done") != (f.get("status") == "done"):
+        done_differs = (d.get("status") == "done") != (f.get("status") == "done")
+        if done_differs:
             finished, stale = ("files", "DB") if f.get("status") == "done" else ("DB", "files")
             problems.append(
                 f"{key}: done in the {finished} but not in the {stale} — `done` is the "
                 f"one status the graph cannot derive, so the {stale} will keep offering "
                 f"finished work as startable"
+            )
+        # `verifying` is underivable for exactly the same reason, and
+        # `derive_status` says so: `done`, `verifying` and an active claim are
+        # the three facts the graph cannot work out for itself. This compared
+        # two of the three. So a store holding `claimed` (or `ready`) against a
+        # file holding `verifying` read as AGREEMENT, and the committed
+        # ROADMAP.md kept offering shipped work as startable — the exact harm
+        # the `done` message above describes, reached by the one door left open.
+        #
+        # Measured in Lucille 2026-09-14: four items differed this way while
+        # `diff` reported "db and files agree", and the two committed artifacts
+        # disagreed with each other — ROADMAP.md listed
+        # `user-timezone-is-never-asked-only-defaulted` as `now` and startable
+        # while its own item file said `status: verifying`.
+        #
+        # Suppressed when `done` already differs: a db=`verifying` /
+        # files=`done` pair is ONE disagreement, and reporting it twice would
+        # make the commonest real case read as two problems.
+        elif (d.get("status") == "verifying") != (f.get("status") == "verifying"):
+            shipped, stale = (
+                ("files", "DB") if f.get("status") == "verifying" else ("DB", "files")
+            )
+            problems.append(
+                f"{key}: verifying in the {shipped} but not in the {stale} — `verifying` "
+                f"is underivable too, so the {stale} will keep offering shipped work as "
+                f"startable and its claim will read as an ordinary hold"
             )
         if (d.get("claimed_by") or None) != (f.get("claimed_by") or None):
             problems.append(

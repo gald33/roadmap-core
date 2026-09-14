@@ -338,3 +338,61 @@ def test_an_unknown_status_keeps_the_base_threshold():
     item = _held("k", status="verifyng", days_ago=4.0, now=now)
     assert graph.claim_threshold_days(item) == graph.STALE_CLAIM_DAYS
     assert graph.stale_claims({"k": item}, now=now)
+
+
+# --- the drift detector compared two of the three underivable facts ---------
+
+
+def _pair(db_status, file_status, *, db_claim=None, file_claim=None):
+    from roadmap_core import cli
+
+    db = {"k": {"key": "k", "status": db_status, "claimed_by": db_claim}}
+    files = {"k": {"key": "k", "status": file_status, "claimed_by": file_claim}}
+    return cli.compare_sources(db, files)
+
+
+def test_a_verifying_disagreement_is_a_divergence():
+    """`derive_status` names three facts the graph cannot derive — `done`,
+    `verifying` and an active claim. `compare_sources` checked two of them.
+
+    So a store holding `claimed` against a file holding `verifying` read as
+    AGREEMENT. Measured in Lucille 2026-09-14: four items differed this way
+    while `diff` reported "db and files agree", and the two committed artifacts
+    contradicted each other — ROADMAP.md offered
+    `user-timezone-is-never-asked-only-defaulted` as `now` and startable while
+    its own item file said `status: verifying`.
+    """
+    problems = _pair("claimed", "verifying", db_claim="claude/x", file_claim="claude/x")
+    assert any("verifying" in p for p in problems), (
+        "a store/file disagreement on `verifying` must be reported; it is as "
+        "underivable as `done` and decides whether work is offered"
+    )
+
+
+def test_a_ready_store_against_a_verifying_file_is_a_divergence():
+    """The shape that actually offers shipped work as startable."""
+    assert any("verifying" in p for p in _pair("ready", "verifying"))
+
+
+def test_agreement_on_verifying_is_not_a_divergence():
+    """It must not cry wolf on the normal case."""
+    assert _pair("verifying", "verifying") == []
+
+
+def test_a_done_verifying_pair_is_reported_once():
+    """One disagreement, one line.
+
+    db=`verifying` / files=`done` is the commonest real case — a session marked
+    an item done in the checkout and the store has not caught up. Reporting it
+    under both the `done` and the `verifying` heading would make one problem
+    read as two.
+    """
+    problems = _pair("verifying", "done")
+    assert len(problems) == 1, problems
+    assert "done" in problems[0]
+
+
+def test_neither_status_underivable_is_still_quiet():
+    """`claimed` vs `ready` is derived from the claim, not stored — comparing it
+    would fire on every item whose claim the two sources already agree on."""
+    assert _pair("claimed", "ready", db_claim="claude/x", file_claim="claude/x") == []
