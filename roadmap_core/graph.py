@@ -20,6 +20,14 @@ from typing import Any
 
 STATUSES = ("ready", "deferred", "blocked", "claimed", "verifying", "done")
 
+#: Column width for a status token printed alongside other columns.
+#:
+#: Derived from ``STATUSES`` rather than written out, so adding a longer status
+#: cannot silently unalign every surface that prints one. Every renderer that
+#: puts a status in a column uses this, which is what makes ``roadmap list``
+#: line up with anything else that grows one later.
+STATUS_WIDTH = max(len(s) for s in STATUSES)
+
 #: How the generated markdown tells a reader to re-run this tool.
 #:
 #: The name of the console script this package installs, and DELIBERATELY A
@@ -572,6 +580,25 @@ def _node(key: str) -> str:
     return key.replace("-", "_")
 
 
+#: How each derived status is drawn in the dependency graph.
+#:
+#: One entry per ``STATUSES`` member — asserted by the tests, so a new status
+#: cannot be added without deciding how it looks, which is the failure mode
+#: where an unstyled node silently renders as the default and reads as open.
+#:
+#: Stroke properties only. This block is rendered on GitHub in both a light and
+#: a dark theme, and a hardcoded ``fill`` or text ``color`` that reads well on
+#: one is unreadable on the other.
+_MERMAID_STATUS_STYLE = {
+    "ready": "stroke:#2da44e,stroke-width:2px",
+    "deferred": "stroke:#9a6700,stroke-width:1px,stroke-dasharray:4 3",
+    "blocked": "stroke:#cf222e,stroke-width:2px",
+    "claimed": "stroke:#8250df,stroke-width:2px",
+    "verifying": "stroke:#0969da,stroke-width:2px,stroke-dasharray:6 3",
+    "done": "stroke:#8c959f,stroke-width:1px,stroke-dasharray:5 4",
+}
+
+
 def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
     """The agent-facing projection of the graph.
 
@@ -762,9 +789,39 @@ def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
         add("")
         add("```mermaid")
         add("graph TD")
+        # Six constant lines. They are byte-identical on every branch, so they
+        # add no conflict surface at all — unlike a `class a,b,c done` roll-up,
+        # which would be a graph-wide aggregate on ONE line and would conflict
+        # between any two branches that finished different items. That is the
+        # #1103 shape this function's docstring refuses, arriving through
+        # styling instead of through a count. Strokes only, no fill and no text
+        # colour, because this renders on both a light and a dark background
+        # and a hardcoded fill is unreadable on one of them.
+        for statename in STATUSES:
+            add(f"  classDef {statename} {_MERMAID_STATUS_STYLE[statename]}")
         for key in sorted(derived):
+            status = derived[key]["status"]
             label = derived[key]["title"].replace('"', "'")
-            add(f'  {_node(key)}["{label}"]')
+            # Every node carries its status, and it is carried BY THE NODE'S OWN
+            # LINE. Before this the 82 nodes of Lucille's committed graph
+            # rendered identically whether `ready` or `done`, in the one
+            # artifact a session reads to decide what to work on.
+            #
+            # Two markers, because the two readers of this block are different.
+            # `:::status` is for whoever reads the SOURCE — a grep, a diff, an
+            # agent reading the checked-in markdown — and it survives being
+            # quoted a line at a time. The `✓ ` prefix is for whoever reads the
+            # PICTURE, where a stroke colour is a distinction that can be
+            # missed and a glyph in the label cannot be. A `classDef` alone
+            # would have been invisible to the first reader and easy to miss
+            # for the second.
+            #
+            # `:::status` goes on every node, never only the done ones, for the
+            # reason `cmd_list` prints a status on every row: a conditional
+            # marker makes absence carry meaning, and "no marker" reading as
+            # "open" is the bug itself.
+            prefix = "✓ " if status == "done" else ""
+            add(f'  {_node(key)}["{prefix}{label}"]:::{status}')
         for key in sorted(derived):
             for dep in derived[key].get("blocked_on") or []:
                 add(f"  {_node(dep)} --> {_node(key)}")

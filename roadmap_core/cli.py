@@ -1457,6 +1457,13 @@ def cmd_prune(args: argparse.Namespace) -> int:
     carrying forward should already be in ``ARCS.md`` or the design doc — an item
     is a work ticket, not an archive.
 
+    WITH ONE EXCEPTION: an item carrying ``tickets`` is withheld. That field is
+    the only copy of the edge from shipped work back to the person who reported
+    it, and unlike the prose above it has no second home in git history that
+    anything queries. ``--include-ticket-linked`` overrides, for an operator who
+    has checked those loops are closed. See the comment at the withholding for
+    why the predicate here is broader than the rule it implements.
+
     DB first, then the file: if the store delete fails the file stays, so a
     partial run is simply re-runnable rather than leaving an item that exists in
     a checkout and nowhere else.
@@ -1485,32 +1492,74 @@ def cmd_prune(args: argparse.Namespace) -> int:
         for line in blockers:
             print(f"  {line}", file=sys.stderr)
     files = load_from_files()
+    stored: dict[str, dict[str, Any]] = {}
     done = sorted(k for k, i in files.items() if i.get("status") == "done")
     try:
+        stored = load_from_db()
         done += sorted(
-            k for k, i in load_from_db().items() if i.get("status") == "done" and k not in done
+            k for k, i in stored.items() if i.get("status") == "done" and k not in done
         )
     except SystemExit as exc:  # no JWT / API down — the file side still prunes
         print(f"warning: could not read the store ({exc}); pruning files only", file=sys.stderr)
     if not done:
         print("no done items — nothing to prune")
         return 0
-    # A pruned item takes its `done_at`, `done_version` and ticket links with it,
-    # and those are exactly the fields `impact` reads — the answer to "is anybody
-    # still complaining about this after we fixed it" only exists while the item
-    # does. Warned, not blocked: rule 4 says do not accumulate a done pile, and
-    # silently refusing to prune would rebuild the pile this command exists to
-    # clear. Run `impact` first if the answer still matters.
-    linked = {k: files.get(k, {}).get("tickets") or [] for k in done}
+    # HYGIENE LOSES TO EVIDENCE. A pruned item takes its `tickets` with it, and
+    # that field is the ONLY copy of the link from shipped work back to the
+    # person who reported it — one writer, no second copy anywhere. `impact`
+    # reads it to answer "is anybody still complaining about this after we
+    # fixed it", and Lucille's ticket lifecycle walks it the other way to move
+    # a report to `handled`, the one status its reporter ever sees. Destroying
+    # it to tidy a done pile trades something irreplaceable for something
+    # cosmetic.
+    #
+    # So this used to warn and prune anyway. It now withholds them, which is
+    # the CEO ruling of 2026-09-14 (gald33/Lucille#1429).
+    #
+    # ⚠️ THE RULING IS NARROWER THAN WHAT IS IMPLEMENTED HERE, and the gap is
+    # deliberate rather than forgotten. The rule is "skip an item whose
+    # `tickets` is non-empty AND WHOSE LOOP IS STILL OPEN" — once the linked
+    # ticket reaches `handled` the edge has done its job and the item should
+    # prune normally. The predicate is "is this edge still load-bearing", not
+    # "does this field exist". This package cannot evaluate the first half:
+    # ticket status lives in the consumer's `feedback_tickets` table, and
+    # reaching for it would make a stdlib-only library depend on one specific
+    # backend — the one thing `pyproject.toml` says it must never do. So the
+    # conservative half is implemented, it is LOUD about being conservative,
+    # and `--include-ticket-linked` is the operator's way to say "I checked,
+    # the loops are closed" — the judgement a human can make and this code
+    # cannot.
+    linked = {k: ((files.get(k) or stored.get(k) or {}).get("tickets") or []) for k in done}
     linked = {k: v for k, v in linked.items() if v}
-    if linked:
+    if linked and not args.include_ticket_linked:
+        done = [k for k in done if k not in linked]
         print(
-            "warning: these carry ticket links; `impact` cannot answer for them "
-            "once pruned:",
+            f"withholding {len(linked)} item(s): they carry ticket links, which "
+            "are the only record of who reported the work.",
+            file=sys.stderr,
+        )
+        for key, ids in sorted(linked.items()):
+            print(f"  {key}  ({len(ids)} ticket(s): {', '.join(ids)})", file=sys.stderr)
+        print(
+            "This tool cannot see ticket status — that lives in the consuming\n"
+            "application, not in roadmap-core — so it cannot tell a loop that is\n"
+            "still open from one already closed, and withholds both. Check\n"
+            f"whether those tickets are handled (`{graph.CLI} impact <key>` shows\n"
+            "what the links answer); if they are, re-run with\n"
+            "--include-ticket-linked to prune them too.",
+            file=sys.stderr,
+        )
+    elif linked:
+        print(
+            f"--include-ticket-linked: pruning {len(linked)} item(s) WITH ticket "
+            "links; their link to the reporter is destroyed:",
             file=sys.stderr,
         )
         for key, ids in sorted(linked.items()):
             print(f"  {key}  ({len(ids)} ticket(s))", file=sys.stderr)
+    if not done:
+        print("nothing to prune — every done item is withheld for its ticket links")
+        return 0
 
     if not args.yes:
         print("would prune (re-run with --yes):")
@@ -1668,8 +1717,23 @@ def cmd_list(args: argparse.Namespace) -> int:
                     suffix += f"  ⚠️ held {age:.1f}d"
             elif unmet := graph.unmet_deps(item, by_key):
                 suffix = f"  ← {', '.join(unmet)}"
+            # The status token is ON THE LINE, not only in the band header
+            # above it. A header is read once and then scrolled past: a grep, a
+            # truncated read, a line quoted into a dispatch message, or plain
+            # scrollback all deliver the line WITHOUT it, and the line then
+            # says nothing about whether the work is open. Measured 2026-09-14
+            # in Lucille: 10 of its 18 `done` items carried a `now`/`next`
+            # priority, so they rendered as `now  <key>  <present-tense
+            # defect>` — byte-identical in shape to the repo's highest-priority
+            # open work. A session read one, believed it, and dispatched ~150k
+            # tokens re-fixing already-shipped work.
+            #
+            # Every item gets one, never only the finished ones: a marker that
+            # appears conditionally makes ABSENCE carry meaning, which is the
+            # exact shape of the bug — an unmarked line read as open work.
             print(
-                f"  {graph.priority_of(item) or '':<6} "
+                f"  {statename:<{graph.STATUS_WIDTH}} "
+                f"{graph.priority_of(item) or '':<6} "
                 f"{item['key']:<38} {item['title']}{suffix}"
             )
     _stale_claim_notice(by_key)
@@ -2276,6 +2340,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="prune even though roadmap/items/ disagrees with origin/main "
              "(you have read the difference and it is deliberate)",
+    )
+    p_prune.add_argument(
+        "--include-ticket-linked",
+        action="store_true",
+        help="also prune done items that carry `tickets` links (withheld by "
+             "default: that field is the only record of who reported the work, "
+             "and this tool cannot see whether their loop is closed)",
     )
     p_prune.set_defaults(func=cmd_prune)
 
