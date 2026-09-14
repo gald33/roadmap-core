@@ -232,3 +232,167 @@ def test_cli_messages_name_no_path_from_the_extraction_repo():
                 f"cli.py prints {text!r}, naming {bad!r} — a path that exists only in "
                 f"the repository this package was extracted from. Use `graph.CLI`."
             )
+
+
+# --- a claim that is held on purpose is not a claim that was forgotten -------
+
+
+def _held(key, *, status, days_ago, now):
+    """An item claimed `days_ago` by a branch, in `status`."""
+    import datetime as _dt
+
+    return {
+        "key": key,
+        "title": key,
+        "status": status,
+        "blocked_on": [],
+        "evidence": "x",
+        "claimed_by": f"claude/{key}",
+        "claimed_at": (now - _dt.timedelta(days=days_ago)).isoformat(),
+    }
+
+
+def _now():
+    import datetime as _dt
+
+    return _dt.datetime(2026, 9, 14, 12, 0, tzinfo=_dt.timezone.utc)
+
+
+def test_a_verifying_claim_is_not_stale_at_the_base_threshold():
+    """The bug this package had against itself.
+
+    Setting `verifying` PRINTS "verifying does NOT drop the claim — the branch
+    that shipped this still owns confirming it". `ready` then reported that
+    same claim as a "likely finished session that never released" and advised
+    releasing it. Measured in Lucille 2026-09-14 on
+    `closure-tool-fires-but-nothing-is-written`, held 7.8 days; its own claim
+    audit said "Nothing to decide" about the identical row the same day.
+    Releasing it would have stripped the claim from the branch that owns the
+    watch — wrong advice, not merely noisy.
+    """
+    now = _now()
+    by_key = {
+        "claimed": _held("claimed", status="claimed", days_ago=7.8, now=now),
+        "verifying": _held("verifying", status="verifying", days_ago=7.8, now=now),
+    }
+    stale = graph.stale_claims(by_key, now=now)
+    assert [item["key"] for item in stale] == ["claimed"], (
+        "a `verifying` claim held under the verifying threshold must not be "
+        "reported as an abandoned hold"
+    )
+
+
+def test_a_verifying_claim_is_still_reported_once_it_outlives_its_own_window():
+    """Surfacing threshold, never an expiry — reported later, not never.
+
+    A session can ship and die before the effect lands, and that claim is just
+    as abandoned as any other. Excluding `verifying` outright would trade a
+    wrong report for a missing one.
+    """
+    now = _now()
+    by_key = {"v": _held("v", status="verifying", days_ago=20.0, now=now)}
+    stale = graph.stale_claims(by_key, now=now)
+    assert [item["key"] for item in stale] == ["v"]
+    assert stale[0]["claim_threshold_days"] == graph.VERIFYING_CLAIM_DAYS
+
+
+def test_the_verifying_window_is_longer_than_the_base_one():
+    """If these ever cross, the override silently becomes a no-op."""
+    assert graph.VERIFYING_CLAIM_DAYS > graph.STALE_CLAIM_DAYS
+
+
+def test_a_widened_threshold_widens_verifying_too():
+    """`max`, not override: a caller asking for a laxer bar gets it everywhere.
+
+    Otherwise `threshold_days=30` would report a 20-day `verifying` hold while
+    ignoring a 20-day `claimed` one — the laxer request making the stricter
+    answer.
+    """
+    now = _now()
+    by_key = {"v": _held("v", status="verifying", days_ago=20.0, now=now)}
+    assert graph.stale_claims(by_key, now=now, threshold_days=30) == []
+    assert graph.claim_threshold_days(by_key["v"], threshold_days=30) == 30
+
+
+def test_a_narrowed_threshold_does_not_narrow_verifying():
+    """A status that holds on purpose still holds on purpose."""
+    now = _now()
+    by_key = {"v": _held("v", status="verifying", days_ago=7.8, now=now)}
+    assert graph.stale_claims(by_key, now=now, threshold_days=0.1) == []
+
+
+def test_every_other_status_keeps_the_base_threshold():
+    """The override is a named exception, not a general loosening."""
+    now = _now()
+    for status in graph.STATUSES:
+        if status == "verifying":
+            continue
+        item = _held("k", status=status, days_ago=4.0, now=now)
+        assert graph.claim_threshold_days(item) == graph.STALE_CLAIM_DAYS, status
+        assert graph.stale_claims({"k": item}, now=now), status
+
+
+def test_an_unknown_status_keeps_the_base_threshold():
+    """A typo must not silently buy an item a two-week hold."""
+    now = _now()
+    item = _held("k", status="verifyng", days_ago=4.0, now=now)
+    assert graph.claim_threshold_days(item) == graph.STALE_CLAIM_DAYS
+    assert graph.stale_claims({"k": item}, now=now)
+
+
+# --- the drift detector compared two of the three underivable facts ---------
+
+
+def _pair(db_status, file_status, *, db_claim=None, file_claim=None):
+    from roadmap_core import cli
+
+    db = {"k": {"key": "k", "status": db_status, "claimed_by": db_claim}}
+    files = {"k": {"key": "k", "status": file_status, "claimed_by": file_claim}}
+    return cli.compare_sources(db, files)
+
+
+def test_a_verifying_disagreement_is_a_divergence():
+    """`derive_status` names three facts the graph cannot derive — `done`,
+    `verifying` and an active claim. `compare_sources` checked two of them.
+
+    So a store holding `claimed` against a file holding `verifying` read as
+    AGREEMENT. Measured in Lucille 2026-09-14: four items differed this way
+    while `diff` reported "db and files agree", and the two committed artifacts
+    contradicted each other — ROADMAP.md offered
+    `user-timezone-is-never-asked-only-defaulted` as `now` and startable while
+    its own item file said `status: verifying`.
+    """
+    problems = _pair("claimed", "verifying", db_claim="claude/x", file_claim="claude/x")
+    assert any("verifying" in p for p in problems), (
+        "a store/file disagreement on `verifying` must be reported; it is as "
+        "underivable as `done` and decides whether work is offered"
+    )
+
+
+def test_a_ready_store_against_a_verifying_file_is_a_divergence():
+    """The shape that actually offers shipped work as startable."""
+    assert any("verifying" in p for p in _pair("ready", "verifying"))
+
+
+def test_agreement_on_verifying_is_not_a_divergence():
+    """It must not cry wolf on the normal case."""
+    assert _pair("verifying", "verifying") == []
+
+
+def test_a_done_verifying_pair_is_reported_once():
+    """One disagreement, one line.
+
+    db=`verifying` / files=`done` is the commonest real case — a session marked
+    an item done in the checkout and the store has not caught up. Reporting it
+    under both the `done` and the `verifying` heading would make one problem
+    read as two.
+    """
+    problems = _pair("verifying", "done")
+    assert len(problems) == 1, problems
+    assert "done" in problems[0]
+
+
+def test_neither_status_underivable_is_still_quiet():
+    """`claimed` vs `ready` is derived from the claim, not stored — comparing it
+    would fire on every item whose claim the two sources already agree on."""
+    assert _pair("claimed", "ready", db_claim="claude/x", file_claim="claude/x") == []

@@ -98,6 +98,48 @@ _UNKNOWN_PRIORITY_RANK = _PRIORITY_RANK[None]
 #: the next reader, who can check the branch and decide.
 STALE_CLAIM_DAYS = 3
 
+#: How long a ``verifying`` claim may stand before it reads as suspect.
+#:
+#: The threshold above rests on "an agent claims, works, opens a PR and merges,
+#: usually inside a day". ``verifying`` is the one status where that is FALSE BY
+#: DESIGN, and this package says so itself — setting the status prints "verifying
+#: does NOT drop the claim — the branch that shipped this still owns confirming
+#: it. Move to `done` once the effect is actually observed". Observing a prod
+#: effect takes as long as it takes; a post-merge check can sit inside a 14-day
+#: window before it has anything to report.
+#:
+#: So the flat 3-day read made this package contradict itself between two of its
+#: own commands. Measured in Lucille 2026-09-14: ``ready`` reported
+#: ``closure-tool-fires-but-nothing-is-written`` as a "likely finished session
+#: that never released" and advised releasing it, while that repo's own claim
+#: audit reported the same item the same day as "'verifying', which is the one
+#: status that deliberately keeps its claim ... Nothing to decide." Releasing it
+#: would have stripped the claim from the branch that owns the watch — so the
+#: advice was not merely noisy, it was wrong.
+#:
+#: Still a surfacing threshold and never an expiry: a ``verifying`` claim CAN be
+#: abandoned, by a session that shipped and died before the effect landed. It is
+#: reported later, not never.
+VERIFYING_CLAIM_DAYS = 14
+
+#: Statuses whose claim is expected to outlive a session. Anything absent here
+#: uses ``STALE_CLAIM_DAYS``; a status is listed only when holding is the
+#: DOCUMENTED behaviour, never to quiet a noisy report.
+_CLAIM_THRESHOLD_DAYS: dict[str, float] = {"verifying": VERIFYING_CLAIM_DAYS}
+
+
+def claim_threshold_days(
+    item: dict[str, Any], *, threshold_days: float = STALE_CLAIM_DAYS
+) -> float:
+    """How long *this* item's claim may stand before it reads as suspect.
+
+    ``max`` rather than a plain override, so a caller that deliberately widens
+    the base threshold widens this one with it. Narrowing it does not narrow
+    this one — a status that holds on purpose still holds on purpose.
+    """
+    override = _CLAIM_THRESHOLD_DAYS.get(str(item.get("status") or ""))
+    return threshold_days if override is None else max(override, threshold_days)
+
 #: The second edge type, and the only non-blocking one.
 #:
 #: ``blocked_on`` says "do not start X until Y is done" — a claim about
@@ -342,12 +384,24 @@ def stale_claims(
     Copies rather than mutating, with ``claim_age_days`` added, so the CLI, the
     API and the generated markdown all report the same age from the same
     computation instead of each re-deriving it against its own clock.
+
+    The threshold is per-status (see ``claim_threshold_days``): ``verifying``
+    keeps its claim on purpose, and reporting that as an abandoned hold made
+    this package advise undoing something it had just told the caller to do.
+    ``claim_threshold_days`` is carried on each returned item so a caller can
+    say what bar was applied instead of assuming the base one.
     """
     aged = []
     for key in sorted(by_key):
-        age = claim_age_days(by_key[key], now=now)
-        if age is not None and age >= threshold_days:
-            aged.append({**by_key[key], "claim_age_days": round(age, 1)})
+        item = by_key[key]
+        age = claim_age_days(item, now=now)
+        if age is None:
+            continue
+        limit = claim_threshold_days(item, threshold_days=threshold_days)
+        if age >= limit:
+            aged.append(
+                {**item, "claim_age_days": round(age, 1), "claim_threshold_days": limit}
+            )
     return sorted(aged, key=lambda item: item["claim_age_days"], reverse=True)
 
 
