@@ -36,15 +36,21 @@ _Nothing blocked._
 
 ```mermaid
 graph TD
-  a_claim_cannot_survive_the_floors_ci["On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore"]
-  an_agent_cannot_reach_the_roadmap["An agent has no way to reach the roadmap — serve it as MCP tools over stdio"]
-  arcs_md_path_is_not_configurable["Decide whether ARCS.md at the repository root is the contract or an accident"]
-  artifact_namespaces_are_one_projects["Let a project declare its own artifact namespaces instead of inheriting seven"]
-  cli_messages_name_a_script_that_does_not_exist["Finish the job on the CLI's own messages — fourteen still name roadmap.py"]
-  credential_error_names_one_repos_secret["Stop the db source asking an adopter for a credential only one company mints"]
-  generated_file_points_at_an_uncreated_readme["Create the roadmap/README.md the generated files and the validator both cite"]
-  nothing_tells_an_adopter_their_setup_is_broken["Nothing answers 'is this project's roadmap setup working?' — add `doctor` and `--version`"]
-  roadmap_core_runs_its_own_roadmap["Run this package's own backlog on this package"]
+  classDef ready stroke:#2da44e,stroke-width:2px
+  classDef deferred stroke:#9a6700,stroke-width:1px,stroke-dasharray:4 3
+  classDef blocked stroke:#cf222e,stroke-width:2px
+  classDef claimed stroke:#8250df,stroke-width:2px
+  classDef verifying stroke:#0969da,stroke-width:2px,stroke-dasharray:6 3
+  classDef done stroke:#8c959f,stroke-width:1px,stroke-dasharray:5 4
+  a_claim_cannot_survive_the_floors_ci["✓ On the SQLite floor, claiming an item turns CI red — `push` drops the claim it is asked to restore"]:::done
+  an_agent_cannot_reach_the_roadmap["✓ An agent has no way to reach the roadmap — serve it as MCP tools over stdio"]:::done
+  arcs_md_path_is_not_configurable["Decide whether ARCS.md at the repository root is the contract or an accident"]:::ready
+  artifact_namespaces_are_one_projects["Let a project declare its own artifact namespaces instead of inheriting seven"]:::ready
+  cli_messages_name_a_script_that_does_not_exist["Finish the job on the CLI's own messages — fourteen still name roadmap.py"]:::ready
+  credential_error_names_one_repos_secret["Stop the db source asking an adopter for a credential only one company mints"]:::ready
+  generated_file_points_at_an_uncreated_readme["Create the roadmap/README.md the generated files and the validator both cite"]:::ready
+  nothing_tells_an_adopter_their_setup_is_broken["✓ Nothing answers 'is this project's roadmap setup working?' — add `doctor` and `--version`"]:::done
+  roadmap_core_runs_its_own_roadmap["✓ Run this package's own backlog on this package"]:::done
   a_claim_cannot_survive_the_floors_ci -.- an_agent_cannot_reach_the_roadmap
   cli_messages_name_a_script_that_does_not_exist -.- credential_error_names_one_repos_secret
 ```
