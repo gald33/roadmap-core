@@ -1198,6 +1198,23 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 1
 
 
+# How settled each of the two underivable statuses is. `derive_status` recomputes
+# every other status from the edges, so these are the only two a checkout cannot
+# work out for itself — and therefore the only two `pull` has to carry.
+#
+# THE ORDER IS THE DESIGN: `pull` moves a file UP this scale and never down. The
+# store's silence about `verifying` is IGNORANCE, NOT DENIAL — the backend honors
+# `status` on INSERT and ignores it on UPDATE, so a file's `verifying` has no path
+# into an existing store row at all. Projecting the store's `ready` back over it
+# would delete the only record that the work shipped and hand it to the next
+# session as startable, which is the very harm this projection exists to stop.
+#
+# Measured in Lucille from the two committed artifacts, 2026-09-17: 1 item where
+# the store holds the underivable status and the file does not, against 17 the
+# other way, 8 of them at store-status `ready`.
+_SETTLEMENT = {"verifying": 1, "done": 2}
+
+
 def cmd_pull(args: argparse.Namespace) -> int:
     """The inverse of ``push``: bring the store's reality back into the checkout.
 
@@ -1209,6 +1226,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
     db = load(source)
     files = load_from_files()
     created, updated = [], []
+    projected: dict[str, str] = {}
     ITEMS_DIR.mkdir(parents=True, exist_ok=True)
     for key in sorted(db):
         item = db[key]
@@ -1225,11 +1243,27 @@ def cmd_pull(args: argparse.Namespace) -> int:
                 else None
             )
             changed = write_claim_to_file(key, claim) or changed
-        if item.get("status") == "done" and local.get("status") != "done":
+        # This projected `done` and nothing else. `verifying` post-dates it and
+        # was never added — not a considered rejection, just a gap — so a store
+        # that knew an item had shipped could not tell a checkout, and every
+        # tokenless session (which is how dispatch runs BY DESIGN) read `ready`
+        # for work that merged days earlier. `pull` would print "the files
+        # already match the store" while `diff` reported the divergence in the
+        # same second, and the sync workflow asserting `diff` stayed red with no
+        # automatic remedy.
+        #
+        # Strictly increasing, per `_SETTLEMENT`: add what the store knows, never
+        # remove what only the file knows.
+        db_rank = _SETTLEMENT.get(item.get("status"), 0)
+        local_rank = _SETTLEMENT.get(local.get("status"), 0)
+        if db_rank > local_rank:
             path = item_path(key)
             path.write_text(
-                _replace_top_level_key(path.read_text(), "status", ["status: done"])
+                _replace_top_level_key(
+                    path.read_text(), "status", [f"status: {item['status']}"]
+                )
             )
+            projected[key] = f"{local.get('status') or 'unset'} -> {item['status']}"
             changed = True
         # A priority set straight against the API (by an operator with no
         # checkout — the case that motivated the field) changes no file, so
@@ -1281,7 +1315,11 @@ def cmd_pull(args: argparse.Namespace) -> int:
     for key in created:
         print(f"created roadmap/items/{key}.yaml")
     for key in updated:
-        print(f"updated roadmap/items/{key}.yaml")
+        # Name the transition. A bare "updated <file>" does not say a status
+        # moved, and a repair that leaves no trace hides the next regression
+        # exactly as this one hid itself.
+        note = f" (status: {projected[key]})" if key in projected else ""
+        print(f"updated roadmap/items/{key}.yaml{note}")
     for key in arcs_created:
         print(f"created roadmap/arcs/{key}.yaml")
     if not created and not updated and not arcs_created:
