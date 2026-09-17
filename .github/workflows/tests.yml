@@ -98,3 +98,23 @@ jobs:
             echo "::error title=adoption::the adoption test skipped — it proved nothing"
             exit 1
           fi
+
+      - name: Every test, with `[files]` present — nothing may skip
+        # THE JOB THAT WAS MISSING, and its absence was silent in both
+        # directions. `isolation` runs the whole suite with yaml deliberately
+        # ABSENT, so any module guarded by `importorskip("yaml")` skips there;
+        # `adoption` ran one named file. A test needing `[files]` and living in
+        # any other file therefore ran in NO job, passed review, and guarded
+        # nothing — measured on this PR, where six new tests reached zero CI
+        # jobs while all three checks were green.
+        #
+        # The whole directory rather than a list of files: a hardcoded list is
+        # this defect again, one file later.
+        run: |
+          set -o pipefail
+          pytest -q -rs tests/ | tee full.txt
+          if grep -qE '[0-9]+ skipped' full.txt; then
+            echo '::error title=tests::a test skipped in the job that installs everything it needs — it proved nothing.'
+            echo '::error title=tests::Either it belongs in this job, or its skip condition is wrong. A skipped test reports success and guards nothing.'
+            exit 1
+          fi
