@@ -1160,6 +1160,26 @@ def validate_arcs(
     return problems
 
 
+def _arc_offering_nothing(
+    key: str, arcs: dict[str, dict[str, Any]], by_key: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]] | None:
+    """The state both arc reports are computed from, or ``None`` if this arc is fine.
+
+    An arc qualifies when it still reads ``open`` and the queue can offer nothing
+    in it. Shared so ``arc_findings`` and ``arc_suppressions`` cannot drift into
+    disagreeing about which arcs are candidates — the moment they did, the quiet
+    channel would stop being the exact complement of the loud one and "not
+    reported" would no longer mean anything definite.
+    """
+    if derive_arc_state(arcs[key], by_key) != "open":
+        return None
+    if startable_in_arc(key, by_key):
+        return None
+    items = items_in_arc(key, by_key)
+    unfinished = [i for i in items if derive_status(i, by_key) not in _FINISHED_STATUSES]
+    return items, unfinished, [derive_status(i, by_key) for i in unfinished]
+
+
 def arc_findings(
     arcs: dict[str, dict[str, Any]], by_key: dict[str, dict[str, Any]]
 ) -> list[str]:
@@ -1181,13 +1201,10 @@ def arc_findings(
     """
     findings: list[str] = []
     for key in sorted(arcs):
-        if derive_arc_state(arcs[key], by_key) != "open":
+        candidate = _arc_offering_nothing(key, arcs, by_key)
+        if candidate is None:
             continue
-        if startable_in_arc(key, by_key):
-            continue
-        items = items_in_arc(key, by_key)
-        unfinished = [i for i in items if derive_status(i, by_key) not in _FINISHED_STATUSES]
-        statuses = [derive_status(i, by_key) for i in unfinished]
+        items, unfinished, statuses = candidate
 
         # AN ARC AWAITING CONFIRMATION IS NOT AN IDLE ARC, and this exclusion is
         # what keeps the check worth reading. `verifying` means the code shipped
@@ -1224,6 +1241,76 @@ def arc_findings(
                 f"because right now the arc claims a tail nobody can pick up."
             )
     return findings
+
+
+def arc_suppressions(
+    arcs: dict[str, dict[str, Any]], by_key: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Arcs whose finding the `verifying` veto swallowed, with work behind it.
+
+    THE COUPLING ``arc_findings`` COSTS AND NEVER SHOWS. Its `verifying`
+    exclusion is sound — an arc awaiting confirmation is supposed to offer
+    nothing startable, and on the first real run (2026-08-16) that exclusion
+    killed 4 of 13 findings, a 31% false-positive rate on a report whose only
+    job is to be believed. But it is a SINGLE-ITEM VETO OVER A WHOLE ARC, and
+    ``verifying`` is the status items get stuck on wrongly: Lucille's own
+    `roadmap-arcs-internalized` sat there for a month while what remained was
+    work, not evidence. One mis-shelved item silences an arc indefinitely, and
+    a suppressed arc and a healthy one print exactly the same nothing.
+
+    So this reports the veto, never overrides it. ``arc_findings`` is untouched
+    — weakening it would trade a measured false-positive rate for an unmeasured
+    one, and its advice ("un-park one, or declare it `blocked`") is genuinely
+    wrong for an arc that really is settling.
+
+    WHAT IS REPORTED IS THE HIDING, NOT THE WAITING. An arc whose every
+    unfinished item is `verifying` hides nothing and is skipped: its whole tail
+    is an observation, which is exactly the case the exclusion exists for, and
+    flagging it would rebuild the same noise one channel over. Only an arc
+    holding OTHER unfinished items behind the veto is losing information — those
+    items are unreachable from the arc layer and nothing else says so.
+
+    Measured over Lucille's committed graph 2026-09-20T04:25Z (146 items, 19
+    arcs): `arc_findings` returned 0, and two arcs were silent on exactly this
+    basis — `bot-tester-cohort` (verifying×1 hiding deferred×2) and
+    `self-revising-preferences` (verifying×1 hiding blocked×2, deferred×1).
+
+    Reported, never failed, for the same reason as ``arc_findings``: see
+    ``validate_arcs``.
+    """
+    suppressed: list[str] = []
+    for key in sorted(arcs):
+        candidate = _arc_offering_nothing(key, arcs, by_key)
+        if candidate is None:
+            continue
+        _items, unfinished, statuses = candidate
+
+        # Not vetoed at all: either already said out loud by `arc_findings`, or
+        # nothing to say. The two channels partition the same candidate set, so
+        # no arc is ever reported by both.
+        if "verifying" not in statuses:
+            continue
+
+        waiting = [i["key"] for i in unfinished if derive_status(i, by_key) == "verifying"]
+        hidden = [
+            f"{i['key']} ({derive_status(i, by_key)})"
+            for i in unfinished
+            if derive_status(i, by_key) != "verifying"
+        ]
+        if not hidden:
+            continue
+
+        suppressed.append(
+            f"arc {key}: no finding reported — {len(waiting)} item(s) awaiting "
+            f"confirmation ({', '.join(waiting)}) suppress it, and "
+            f"{len(hidden)} other unfinished item(s) sit behind that veto "
+            f"({', '.join(hidden)}). If those are genuinely settling this is "
+            f"correct and nothing is owed; if any is mis-shelved, this arc has "
+            f"been offering nothing and saying nothing for as long as it has "
+            f"been there. Settle the verifying item(s), then un-park the rest "
+            f"or declare the arc `blocked` with evidence."
+        )
+    return suppressed
 
 
 def orphan_items(by_key: dict[str, dict[str, Any]]) -> list[str]:
@@ -1299,6 +1386,24 @@ def render_arcs_markdown(
         add("")
         for finding in findings:
             add(f"- {finding}")
+        add("")
+
+    suppressed = arc_suppressions(arcs, by_key)
+    if suppressed:
+        add("## Arcs saying nothing while awaiting confirmation")
+        add("")
+        add(
+            "Quieter than the section above, deliberately. Each of these arcs "
+            "WOULD be reported there but for an item awaiting confirmation, and "
+            "that exclusion is usually right — an arc whose next move is an "
+            "observation is not an idle arc. What is worth seeing is that other "
+            "unfinished work is sitting behind that veto, invisible at arc "
+            "level for as long as the item stays shelved. Nothing here is a "
+            "defect by itself; it is the coupling made readable."
+        )
+        add("")
+        for line in suppressed:
+            add(f"- {line}")
         add("")
 
     add("## Legend")
