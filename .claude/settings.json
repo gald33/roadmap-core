@@ -1,6 +1,8 @@
 {
   "enabledMcpjsonServers": [
-    "repoctx"
+    "repoctx",
+    "switchboard",
+    "roadmap"
   ],
   "hooks": {
     "PostToolUse": [
@@ -52,6 +54,15 @@
       }
     ],
     "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/org-setup.sh\" || true"
+          }
+        ]
+      },
       {
         "hooks": [
           {
