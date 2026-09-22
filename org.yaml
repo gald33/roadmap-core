@@ -1,0 +1,77 @@
+schema_version: 1
+manifest_version: 1
+org:
+  id: roadmap-core
+  repo: gald33/roadmap-core
+  default_branch: main
+  checkout: /home/user/roadmap-core
+  operator:
+    name: gald33
+  account: gald33@gmail.com
+  paths:
+    watchlist: docs/ai/ceo-watchlist.md
+ports:
+  work_store:
+    tool: roadmap-core
+    mode: files
+    files: roadmap/
+    cli: roadmap
+  coordination:
+    tool: switchboard
+    url: https://switchboard.lucille-ai.com
+    workspace: gald33/roadmap-core
+  code_context:
+    tool: repoctx
+    ranker: lexical
+  checks:
+    tool: absent
+  tickets:
+    tool: github-issues
+    label: ticket
+  prod_read:
+    method: origin/main HEAD (no deployed service; the default branch is the production state)
+  vcs:
+    tool: github
+    workflows_owned: []
+  sessions:
+    tool: claude-code-remote
+  operator_surface: docs/human/state-of-the-org.md
+operator_owns: {}
+roles:
+  ceo:
+    name: Link
+  dispatcher:
+    name: Marshal
+  builder:
+    name: Mason
+  reviewer:
+    name: Reed
+  verifier:
+    name: Vera
+  checks-watch:
+    name: Gus
+  registrar:
+    name: Nora
+  account-manager:
+    name: Ruth
+  methods:
+    name: Ida
+  doctor:
+    name: Doc
+budget:
+  daily_usd: 20
+  at_80_percent: warn
+  at_100_percent: pause
+knobs:
+  dispatcher.cap:
+    default: 3
+    range:
+    - 0
+    - 6
+fleet:
+  report_to: gald33/org-core/fleet/roadmap-core
+  sends:
+  - doctor_report
+  - run_ledger_delta
+  - knob_overrides
+  - install_log
