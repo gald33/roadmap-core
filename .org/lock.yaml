@@ -1,6 +1,6 @@
 org_core: 0.25.1
 manifest_version: 1
-generated_at: '2026-09-22T10:50:03+00:00'
+generated_at: '2026-09-22T10:52:30+00:00'
 ports:
   work_store: roadmap-core
   coordination: switchboard
