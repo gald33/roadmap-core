@@ -1,0 +1,94 @@
+<title>Org Status</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#fbfbfc; --surface:#fff; --surface-2:#f6f7f9; --ink:#12141a; --ink-2:#565c6b; --muted:#8b91a1;
+  --border:#e3e5ea; --accent:#3d6ea8;
+  --red:#d03b3b; --green:#0ca30c; --dark-mark:#9aa0ae;
+  --red-wash:#fdf2f2; --green-wash:#f1faf1; --dark-wash:#f6f7f9;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#131417; --surface:#1a1c21; --surface-2:#212429; --ink:#f2f3f5; --ink-2:#a8aebd; --muted:#767c8b;
+  --border:#2a2d35; --accent:#7aa8dc;
+  --red:#e2584f; --green:#3fbb3f; --dark-mark:#767c8b;
+  --red-wash:#241a1b; --green-wash:#16231a; --dark-wash:#1f2228;
+}}
+:root[data-theme="dark"]{
+  --bg:#131417; --surface:#1a1c21; --surface-2:#212429; --ink:#f2f3f5; --ink-2:#a8aebd; --muted:#767c8b;
+  --border:#2a2d35; --accent:#7aa8dc;
+  --red:#e2584f; --green:#3fbb3f; --dark-mark:#767c8b;
+  --red-wash:#241a1b; --green-wash:#16231a; --dark-wash:#1f2228;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:28px 56px}
+h1{font-size:19px;font-weight:600;margin:0;letter-spacing:-.01em}
+.sub{color:var(--ink-2);font-size:12.5px;margin-top:3px;
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.eyebrow{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.banner{display:flex;gap:12px;margin-top:20px;padding:14px 16px;border:1px solid var(--border);
+  border-left-width:4px;border-radius:7px;background:var(--surface)}
+.banner.RED{border-left-color:var(--red);background:var(--red-wash)}
+.banner.CLEAR{border-left-color:var(--green);background:var(--green-wash)}
+.banner.DARK{border-left-color:var(--dark-mark);border-left-style:dashed;background:var(--dark-wash)}
+.banner p{margin:4px 0 0;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13px;
+  word-break:break-word;line-height:1.55}
+.note{margin-top:14px;padding:10px 13px;border:1px dashed var(--border);border-radius:7px;
+  background:var(--surface-2);color:var(--ink-2);font-size:12.5px}
+.grid{display:grid;gap:14px;margin-top:18px;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.tile{border:1px solid var(--border);border-radius:9px;background:var(--surface);padding:14px 16px;
+  display:flex;flex-direction:column;gap:9px;min-width:0}
+.tile.span{grid-column:1/-1}
+.tile.DARK{border-style:dashed}
+.thead{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;letter-spacing:.07em;
+  padding:2px 8px;border-radius:99px;border:1px solid var(--border);white-space:nowrap}
+.chip.RED{color:var(--red);border-color:var(--red)}
+.chip.CLEAR{color:var(--green);border-color:var(--green)}
+.chip.DARK{color:var(--dark-mark);border-style:dashed}
+.tname{font-weight:600;font-size:14px}
+.tier{font-size:11.5px;color:var(--muted)}
+.lines{margin:0;font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+  line-height:1.65;overflow-x:auto;font-variant-numeric:tabular-nums}
+.lines div{padding:1px 0;word-break:break-word}
+.lines div.hot{color:var(--red)}
+.broken{font-size:11.5px;color:var(--muted);border-top:1px dotted var(--border);padding-top:8px;margin-top:auto}
+.broken b{font-weight:600;color:var(--ink-2)}
+table{border-collapse:collapse;width:100%;font-size:12.5px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:10.5px;letter-spacing:.07em;
+  text-transform:uppercase;padding:0 10px 6px 0;white-space:nowrap}
+td{padding:5px 10px 5px 0;border-top:1px solid var(--border);vertical-align:middle;white-space:nowrap}
+td.wide{white-space:normal;min-width:150px}
+.scroll{overflow-x:auto}
+.bar{position:relative;display:inline-block;height:8px;min-width:90px;width:120px;vertical-align:middle;background:var(--surface-2);border-radius:4px}
+.bar i{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--green)}
+.bar i.over{background:var(--red)}
+.bar u{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink-2);opacity:.6}
+.foot{margin-top:26px;padding-top:14px;border-top:1px solid var(--border);color:var(--muted);font-size:12px}
+.foot code{font-family:"IBM Plex Mono",ui-monospace,monospace;color:var(--ink-2);word-break:break-all}
+.foot p{margin:5px 0}
+@media (max-width:460px){.wrap{padding-block:20px 40px}.grid{grid-template-columns:1fr}}
+</style>
+<div class="wrap">
+  <div class="eyebrow">org status </div>
+  <h1 id="org">roadmap-core</h1>
+  <div class="sub"><span id="readat">read at 2026-09-22T13:23:43+00:00</span><span id="age"></span> · facts 2026-09-22T13:23:43+00:00 (0.0h old)</div>
+  
+  <div class="banner RED" id="banner">
+    <div><div class="eyebrow">headline</div><p id="headline">DEAD account-manager: no record at roles/account-manager/last-run — never ran, or ran and could not report  [5 of 7 tiles red, 0 dark]</p></div>
+  </div>
+  
+  <div class="grid" id="tiles"><section class='tile RED span'><div class='thead'><span class='chip RED'>● RED</span><span class='tname'>the chain — finding to verified</span><span class='tier'>mixed — several sources</span></div><div class='scroll'><table><thead><tr><th>edge</th><th>tier</th><th>owner</th><th>median</th><th>n</th><th>waiting</th><th>worst now</th><th>vs target</th></tr></thead><tbody><tr><td>finding_to_dispatch</td><td>board</td><td>dispatcher</td><td>—</td><td>0</td><td>0</td><td class='wide'>—</td><td>—  (target 24h)</td></tr><tr><td colspan='8' class='wide' style='color:var(--muted);border-top:none;padding-top:0'>the board kept no earlier record (row 62)</td></tr><tr><td>dispatch_to_pr</td><td>board</td><td>builder</td><td>—</td><td>0</td><td>0</td><td class='wide'>—</td><td>—  (target 24h)</td></tr><tr><td colspan='8' class='wide' style='color:var(--muted);border-top:none;padding-top:0'>the board kept no earlier record (row 62)</td></tr><tr><td>open_to_verdict</td><td>github</td><td>reviewer</td><td>—</td><td>0</td><td>1</td><td class='wide'>#17 56.82h</td><td><span class='bar' title='worst 56.82h against a 1h target'><i class='over' style='width:100%'></i><u style='left:100%'></u></span>  (target 1h)</td></tr><tr><td>verdict_to_merge</td><td>github</td><td>ceo</td><td>—</td><td>0</td><td>0</td><td class='wide'>—</td><td>—  (target 1h)</td></tr><tr><td>merge_to_verified</td><td>board</td><td>verifier</td><td>—</td><td>0</td><td>0</td><td class='wide'>—</td><td>—  (target 72h)</td></tr><tr><td colspan='8' class='wide' style='color:var(--muted);border-top:none;padding-top:0'>the board kept no earlier record (row 62)</td></tr><tr><td>unsound_open</td><td>github</td><td>builder</td><td>—</td><td>0</td><td>0</td><td class='wide'>—</td><td>—  (target 24h)</td></tr><tr><td colspan='8' class='wide' style='color:var(--muted);border-top:none;padding-top:0'>n is 0 by construction (tempo.py:711) — the SLOW half is unreachable; WAITING is real</td></tr></tbody></table></div><div class='lines'><div class='hot'>WAITING open_to_verdict: #17 for 56.82h (target 1h), 1 waiting</div></div></section><section class='tile RED'><div class='thead'><span class='chip RED'>● RED</span><span class='tname'>the chair — is anything merging</span><span class='tier'>github — GitHub&#x27;s own history — medians are real</span></div><div class='lines'><div class=''>open SOUND pull requests 0</div><div class=''>last merge 2026-09-22T13:22:47Z — 0.02h ago</div><div class='hot'>CEO record ABSENT — the chair has never written, or its record expired</div></div></section><section class='tile RED'><div class='thead'><span class='chip RED'>● RED</span><span class='tname'>roles against their own clocks</span><span class='tier'>board — present only — one record per key, overwritten each wake (row 62)</span></div><div class='lines'><div class='hot'>DEAD account-manager: no record at roles/account-manager/last-run — never ran, or ran and could not report</div><div class='hot'>ABSENT builder: no record, and cadence `on-demand` is not a clock — nothing ages it, so this is presence only (row 81)</div><div class='hot'>ABSENT ceo: no record, and cadence `on-wake` is not a clock — nothing ages it, so this is presence only (row 81)</div><div class='hot'>DEAD checks-watch: no record at roles/checks-watch/last-run — never ran, or ran and could not report</div><div class='hot'>DEAD dispatcher: no record at roles/dispatcher/last-run — never ran, or ran and could not report</div><div class='hot'>DEAD doctor: no record at roles/doctor/last-run — never ran, or ran and could not report</div><div class='hot'>DEAD methods: no record at roles/methods/last-run — never ran, or ran and could not report</div><div class='hot'>DEAD registrar: no record at roles/registrar/last-run — never ran, or ran and could not report</div><div class='hot'>ABSENT reviewer: no record, and cadence `on-demand` is not a clock — nothing ages it, so this is presence only (row 81)</div><div class='hot'>DEAD verifier: no record at roles/verifier/last-run — never ran, or ran and could not report</div></div></section><section class='tile CLEAR'><div class='thead'><span class='chip CLEAR'>○ CLEAR</span><span class='tname'>blocked now, and what never reached the queue</span><span class='tier'>board — present only — one record per key, overwritten each wake (row 62)</span></div><div class='lines'><div class=''>no role&#x27;s record carries a blocker</div></div><div class='broken'><b>broken looks like:</b> BLOCKED &lt;role&gt;: &lt;text&gt; / UNFORWARDED blocked &lt;role&gt; &lt;h&gt;h</div></section><section class='tile CLEAR'><div class='thead'><span class='chip CLEAR'>○ CLEAR</span><span class='tname'>handoffs written and never received</span><span class='tier'>board — present only — one record per key, overwritten each wake (row 62)</span></div><div class='lines'><div class=''>0 handoff key(s) on the board, all acked</div></div><div class='broken'><b>broken looks like:</b> NOT RECEIVED &lt;from&gt; -&gt; &lt;to&gt; [&lt;item&gt;] written &lt;at&gt; — waiting &lt;h&gt;h</div></section><section class='tile RED'><div class='thead'><span class='chip RED'>● RED</span><span class='tname'>the wake chain that moves everything else</span><span class='tier'>board — present only — one record per key, overwritten each wake (row 62)</span></div><div class='lines'><div class='hot'>DEAD actuator: no heartbeat at coord/tempo/actuator and no ledger row ever — the four-call wake is not running</div></div></section><section class='tile RED'><div class='thead'><span class='chip RED'>● RED</span><span class='tname'>persistent roles: registered, and on the roster now</span><span class='tier'>board — present only — one record per key, overwritten each wake (row 62)</span></div><div class='lines'><div class='hot'>NEVER REGISTERED ceo: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED dispatcher: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED verifier: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED checks-watch: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED registrar: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED account-manager: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED methods: no `org tempo register` from its session yet</div><div class='hot'>NEVER REGISTERED doctor: no `org tempo register` from its session yet</div></div></section></div>
+  <div class="foot">
+    <p id="cover"><b>read 7 of 7 tiles</b></p>
+    <p>sessions tier: not read — triggers and sessions need a session holding the sessions port</p>
+    <span id="unread"></span>
+    <p>A tile nobody could measure is <b>DARK</b> — absent, not failing. It shows a dashed edge and a
+       muted mark, never a warning colour, so "not measured" reads as neither "fine" nor "broken".</p>
+  </div>
+  
+</div>
