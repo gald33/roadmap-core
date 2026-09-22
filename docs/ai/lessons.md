@@ -1,4 +1,4 @@
-<!-- org-core: role=org file=lessons base=0.25.1 -->
+<!-- org-core: role=org file=lessons base=0.25.2 -->
 <!-- org-core:base -->
 
 # Lessons — roadmap-core

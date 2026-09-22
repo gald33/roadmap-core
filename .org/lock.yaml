@@ -1,6 +1,6 @@
-org_core: 0.25.1
+org_core: 0.25.2
 manifest_version: 1
-generated_at: '2026-09-22T10:52:30+00:00'
+generated_at: '2026-09-22T13:18:25+00:00'
 ports:
   work_store: roadmap-core
   coordination: switchboard
@@ -111,9 +111,9 @@ files:
   .claude/hooks/org-setup.sh:
     role: org
     kind: setup
-    template_version: 0.25.1
+    template_version: 0.25.2
     template_sha256: 83214805a9d4154f40c960a93ebedb07b2c90b0b2d3e2ecfbaaa1a81f906ed30
-    rendered_sha256: 25d300084b497da5227fb8ecacc6b49c28cb90c475e05278b88092343b6cc57b
+    rendered_sha256: 7f102152af5e4cb8251dce82b55fae10728a4a481bfdf85e672616638fec0da4
     base_sha256: null
   .claude/skills/account-manager/SKILL.md:
     role: account-manager
@@ -188,8 +188,8 @@ files:
   docs/ai/lessons.md:
     role: org
     kind: lessons
-    template_version: 0.25.1
+    template_version: 0.25.2
     template_sha256: 0c23ac9bd6d749e0e41a88dce87a803ffd01ed963d254e69a0215578e02cebe2
-    rendered_sha256: 99111daebc771ed8bdf299d0872d9f7f388d5e59b8f08ca836de22d179baa903
+    rendered_sha256: 16bef65fafb9bb5ca962402fe0f326d1b76af3cd98765716e82dbe5920c08600
     base_sha256: eea054c7c386586f06f79c94964845f4c803fb7cdab707da2f13d43b6e6566f5
-vendored_wheel: .org/wheels/org_core-0.25.1-py3-none-any.whl
+vendored_wheel: .org/wheels/org_core-0.25.2-py3-none-any.whl
