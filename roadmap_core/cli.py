@@ -8,7 +8,8 @@ access, no admin JWT, and no network.
 
 Two sources, one renderer:
 
-  db     — the live graph via ``GET /admin/roadmap`` (needs LUCILLE_ADMIN_JWT)
+  db     — the live graph via ``GET /admin/roadmap`` (needs ROADMAP_API_URL and
+           ROADMAP_API_TOKEN: a ``roadmap serve``, or a host's own admin API)
   files  — ``roadmap/items/*.yaml``, the seed/offline authoring format
 
 Both render through ``roadmap_core.graph``, loaded by path precisely so the CLI
@@ -135,7 +136,10 @@ ROADMAP_STORE_PATH = (
 _ENV_SOURCE = os.environ.get("ROADMAP_SOURCE") or None
 
 _ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-DEFAULT_BACKEND = os.environ.get("LUCILLE_BACKEND_URL", "")
+# `ROADMAP_API_*` are this package's names; the `LUCILLE_*` ones are read as a
+# fallback so the shim in the repository it was extracted from keeps working
+# (roadmap item credential-error-names-one-repos-secret).
+DEFAULT_BACKEND = os.environ.get("ROADMAP_API_URL") or os.environ.get("LUCILLE_BACKEND_URL", "")
 
 # Switchboard write exclusion (roadmap item switchboard-agent-coordination).
 # Advisory only — see switchboard_write_lock's docstring for what "advisory"
@@ -151,7 +155,9 @@ SWITCHBOARD_WORKSPACE = os.environ.get("SWITCHBOARD_WORKSPACE", "")
 # sized to outlive its holder's death is a lock, and a lock nobody can clear is
 # the leaked claim Switchboard exists to eliminate. See the header comment below
 # for where the other two questions that constant used to answer now live.
-SWITCHBOARD_LEASE_TTL = int(os.environ.get("LUCILLE_ROADMAP_LEASE_TTL", "30"))
+SWITCHBOARD_LEASE_TTL = int(
+    os.environ.get("ROADMAP_LEASE_TTL") or os.environ.get("LUCILLE_ROADMAP_LEASE_TTL", "30")
+)
 
 
 from . import graph  # noqa: E402  (after the constants it does not use)
@@ -700,13 +706,15 @@ def render_item_yaml(item: dict[str, Any]) -> str:
 def _api(method: str, path: str, payload: dict | None = None) -> Any:
     """Call the admin API. Fails loudly with the server's message — a silent
     fallback to stale files would be worse than an error here."""
-    token = os.environ.get("LUCILLE_ADMIN_JWT", "").strip()
+    token = _api_token()
     if not token:
         raise SystemExit(
-            "LUCILLE_ADMIN_JWT is not set — needed for the db source.\n"
-            "Mint one with the `mint-admin-jwt` skill, or use --source files."
+            "ROADMAP_API_TOKEN is not set — needed for the db source, a served store.\n"
+            "Ask whoever runs your `roadmap serve` for a token (`roadmap serve token create`),\n"
+            "or use --source files / --source local."
         )
-    base = os.environ.get("LUCILLE_BACKEND_URL", DEFAULT_BACKEND).rstrip("/")
+    base = (os.environ.get("ROADMAP_API_URL") or os.environ.get("LUCILLE_BACKEND_URL")
+            or DEFAULT_BACKEND).rstrip("/")
     req = urllib.request.Request(
         f"{base}{path}",
         method=method,
@@ -725,6 +733,14 @@ def _api(method: str, path: str, payload: dict | None = None) -> Any:
         raise SystemExit(f"{method} {path} -> HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(f"{method} {path} failed: {exc.reason}") from exc
+
+
+def _api_token() -> str:
+    """The served store's bearer token: this package's name first, then the one
+    the repository it was extracted from mints (item
+    credential-error-names-one-repos-secret)."""
+    token = os.environ.get("ROADMAP_API_TOKEN") or os.environ.get("LUCILLE_ADMIN_JWT") or ""
+    return token.strip()
 
 
 def load_from_db() -> dict[str, dict[str, Any]]:
@@ -2230,7 +2246,7 @@ def _check_store(source: str, on_disk: int, chosen: bool) -> list[_Check]:
             "nothing configured, so writes default to the `db` source and would "
             "need a backend and a token. For the SQLite floor set "
             "ROADMAP_SOURCE=local (see templates/roadmap.yml); for a served "
-            "store set LUCILLE_BACKEND_URL and LUCILLE_ADMIN_JWT.",
+            "store set ROADMAP_API_URL and ROADMAP_API_TOKEN (`roadmap serve`).",
             fatal=False,
         )]
 
@@ -2242,11 +2258,11 @@ def _check_store(source: str, on_disk: int, chosen: bool) -> list[_Check]:
             False,
             "the db source is selected but no backend URL is set. The published "
             "package ships no default on purpose — a private hostname is not a "
-            "sensible fallback. Set LUCILLE_BACKEND_URL, or use ROADMAP_SOURCE=local.",
+            "sensible fallback. Set ROADMAP_API_URL, or use ROADMAP_SOURCE=local.",
         ))
     else:
         checks.append(_Check("backend url", True, DEFAULT_BACKEND, fatal=False))
-    if not os.environ.get("LUCILLE_ADMIN_JWT", "").strip():
+    if not _api_token():
         checks.append(_Check(
             "credential",
             False,
@@ -2483,6 +2499,9 @@ def main(argv: list[str] | None = None) -> int:
     p_validate = sub.add_parser("validate", help="schema, dangling deps, cycles")
     _add_source(p_validate)
     p_validate.set_defaults(func=cmd_validate)
+
+    from . import server as _server  # stdlib only, like everything else here
+    _server.add_parser(sub)
 
     p_doctor = sub.add_parser(
         "doctor", help="check that this project's roadmap setup actually works"

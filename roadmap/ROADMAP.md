@@ -15,8 +15,8 @@ Claim before starting: `roadmap claim <key>`
 - `now` **`cli-messages-name-a-script-that-does-not-exist`** — Finish the job on the CLI's own messages — fourteen still name roadmap.py
   - ↔ related: **`credential-error-names-one-repos-secret`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
 - `next` **`artifact-namespaces-are-one-projects`** — Let a project declare its own artifact namespaces instead of inheriting seven
-- `next` **`credential-error-names-one-repos-secret`** — Stop the db source asking an adopter for a credential only one company mints
-  - ↔ related: **`cli-messages-name-a-script-that-does-not-exist`** — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
+- `next` **`pipeline-statuses-are-the-orgs-own`** — An item's status is roadmap-core's fixed six, not the stages the org's work actually moves through
+  - ↔ related: **`claims-move-faster-than-pull-requests`** — Built on the served store: a stage change is a write that must not wait for a merge, and the transition log there is where each stage's entry time is read from.
 - `later` **`arcs-md-path-is-not-configurable`** — Decide whether ARCS.md at the repository root is the contract or an accident
 - `later` **`generated-file-points-at-an-uncreated-readme`** — Create the roadmap/README.md the generated files and the validator both cite
 
@@ -46,12 +46,16 @@ graph TD
   an_agent_cannot_reach_the_roadmap["✓ An agent has no way to reach the roadmap — serve it as MCP tools over stdio"]:::done
   arcs_md_path_is_not_configurable["Decide whether ARCS.md at the repository root is the contract or an accident"]:::ready
   artifact_namespaces_are_one_projects["Let a project declare its own artifact namespaces instead of inheriting seven"]:::ready
+  claims_move_faster_than_pull_requests["Every session holds its own copy of the store, so a claim reaches another session only through a merged pull request — serve one store to many orgs"]:::verifying
   cli_messages_name_a_script_that_does_not_exist["Finish the job on the CLI's own messages — fourteen still name roadmap.py"]:::ready
-  credential_error_names_one_repos_secret["Stop the db source asking an adopter for a credential only one company mints"]:::ready
+  credential_error_names_one_repos_secret["Stop the db source asking an adopter for a credential only one company mints"]:::verifying
   generated_file_points_at_an_uncreated_readme["Create the roadmap/README.md the generated files and the validator both cite"]:::ready
   nothing_tells_an_adopter_their_setup_is_broken["✓ Nothing answers 'is this project's roadmap setup working?' — add `doctor` and `--version`"]:::done
+  pipeline_statuses_are_the_orgs_own["An item's status is roadmap-core's fixed six, not the stages the org's work actually moves through"]:::ready
   roadmap_core_runs_its_own_roadmap["✓ Run this package's own backlog on this package"]:::done
   a_claim_cannot_survive_the_floors_ci -.- an_agent_cannot_reach_the_roadmap
+  claims_move_faster_than_pull_requests -.- credential_error_names_one_repos_secret
+  claims_move_faster_than_pull_requests -.- pipeline_statuses_are_the_orgs_own
   cli_messages_name_a_script_that_does_not_exist -.- credential_error_names_one_repos_secret
 ```
 
@@ -408,6 +412,82 @@ graph TD
 
 </details>
 
+### `claims-move-faster-than-pull-requests`
+
+- **title:** Every session holds its own copy of the store, so a claim reaches another session only through a merged pull request — serve one store to many orgs
+- **status:** verifying
+- **arc:** adoptable-by-anyone
+- **priority:** now
+- **related to** (not a dependency — both are startable):
+  - `credential-error-names-one-repos-secret` — The client half of the same change. A served store an adopter runs themselves is useless while the db source asks for a credential only one company mints; both land on this branch, and the client reads `ROADMAP_API_URL`/`ROADMAP_API_TOKEN` with the Lucille names as fallbacks.
+  - `pipeline-statuses-are-the-orgs-own` — The next step on this store: an org's own pipeline as its status enumeration. The transition log built here is what that item's per-stage history reads.
+- **refs:**
+  - `roadmap_core/server.py`
+  - `roadmap_core/cli.py`
+  - `tests/test_server.py`
+  - `README.md`
+
+<details><summary>evidence</summary>
+
+> VERIFIED BY BUILDING IT, on the branch that carries this item; the one thing
+> still inferred is named at the end.
+>
+> THE GAP, read 2026-09-23/24 (roadmap-core 0.3.2). `LocalStore`'s own docstring
+> calls it "the roadmap in one SQLite file, with no server anywhere" and the
+> store "EPHEMERAL — CI deletes it and rebuilds it from `roadmap/items/*.yaml`
+> every run". Adopters keep it checkout-local (org-core's `.gitignore`:
+> "checkout-local, never committed — the files are the store"). Cloud agent
+> sessions each run in their own container, so each holds its own copy, and a
+> claim one session takes reaches the next only when a commit carrying the
+> item file merges. The operator, in the org-core session that measured this:
+> "claims move faster than PRs", and an item "must hold it somewhere while the
+> item is not in transit". The only served store was Lucille's backend
+> (Postgres behind `/admin/roadmap`), which no other org has.
+>
+> WHAT WAS BUILT. `roadmap serve`, stdlib only (the isolation job still passes
+> with nothing but `[dev]` installed):
+>
+> * one process, many tenants, each tenant's roadmap its own SQLite file
+>   (`<data>/tenants/<id>.db`) behind the same `LocalStore` the floor uses;
+> * the `/admin/roadmap` contract Lucille's backend serves — paths, codes and
+>   shapes, derived status included — so `ApiStore` and the CLI's `db` source
+>   work against it unchanged; the prune tombstone is written even with no row,
+>   as the served path does;
+> * the tenant decided by the token alone — no tenant in any URL;
+> * tokens of 256 random bits, stored as SHA-256 only, with `read`, `write` and
+>   `admin` scopes (`admin` for prune, refile, arc deletion and a forced claim);
+>   one identical 401 for unknown, revoked, expired and disabled-tenant tokens;
+> * TLS 1.2+ with the handshake off the accept loop, or loopback; plaintext
+>   elsewhere refused unless `--allow-plaintext`;
+> * a body cap, no chunked bodies, a socket timeout, a cap on requests in
+>   flight and one on open connections, a per-token budget and a per-address
+>   failed-auth budget;
+> * an audit log (token ids, never tokens), written before the response is
+>   sent, and a per-tenant transition log (`/{key}/history`,
+>   `/transitions?after=`) — the history of claims and statuses the store never
+>   kept;
+> * tenants and tokens managed on the host (`roadmap serve --data … tenant|token`),
+>   never over HTTP.
+>
+> Tests (`tests/test_server.py`, 18, each naming what broken looks like), run
+> both ways CI runs them: `[dev]` only — 178 passed, 2 skipped (the yaml ones,
+> as that job expects); `[files,dev]` — 202 passed, 0 skipped. Five defects
+> were found and fixed before this was filed. By the tests: the audit row was written
+> after the response (a client could read the log before its own request was
+> in it), and `DELETE /admin/roadmap/prunes` fell through to the item route and
+> tombstoned a key called `prunes`; reserved words are now refused on every
+> verb. By re-reading the diff adversarially, each then pinned by a test that
+> fails without its fix: idle connections were uncapped (the request cap counts
+> only requests in flight), `since` was compared as text with its offset left
+> in, and a request line could forge a log line.
+>
+> STILL INFERRED: that an org's sessions use it. No tenant is running yet — the
+> host is the operator's to choose. This item moves to `done` when one org's
+> sessions have claimed and released through a running server and the
+> transition log shows it.
+
+</details>
+
 ### `cli-messages-name-a-script-that-does-not-exist`
 
 - **title:** Finish the job on the CLI's own messages — fourteen still name roadmap.py
@@ -467,10 +547,11 @@ graph TD
 ### `credential-error-names-one-repos-secret`
 
 - **title:** Stop the db source asking an adopter for a credential only one company mints
-- **status:** ready
+- **status:** verifying
 - **arc:** adoptable-by-anyone
 - **priority:** next
 - **related to** (not a dependency — both are startable):
+  - `claims-move-faster-than-pull-requests` — The client half of the same change. A served store an adopter runs themselves is useless while the db source asks for a credential only one company mints; both land on this branch, and the client reads `ROADMAP_API_URL`/`ROADMAP_API_TOKEN` with the Lucille names as fallbacks.
   - `cli-messages-name-a-script-that-does-not-exist` — Same sweep, same file, different string class — land them together or the second PR re-reads the same 2000 lines. That one is about a command name; this one is about environment variables and an error message, so neither grep finds the other.
 - **refs:**
   - `roadmap_core/cli.py`
@@ -502,6 +583,17 @@ graph TD
 > name the variables after this package and let a host map its own: something like
 > `ROADMAP_API_TOKEN` / `ROADMAP_API_URL`, with the Lucille names accepted as
 > fallbacks so its shim keeps working.
+>
+> FIXED ON THE BRANCH THAT FILED claims-move-faster-than-pull-requests, where the
+> server made the need concrete (an adopter now has a served store of their own
+> to point at). `ROADMAP_API_URL`, `ROADMAP_API_TOKEN` and `ROADMAP_LEASE_TTL` are
+> read first and the `LUCILLE_*` names as fallbacks; the credential error now
+> reads "ROADMAP_API_TOKEN is not set — needed for the db source, a served store"
+> and points at `roadmap serve token create`, not a skill in one private
+> repository; `--help` and `doctor` name the new variables. Measured by
+> `tests/test_server.py::test_apistore_and_the_cli_speak_to_it_unchanged`: the db
+> source reads a running server with either name, and without a token the error
+> is the new one. Moves to `done` once a release carries it.
 
 </details>
 
@@ -641,6 +733,42 @@ graph TD
 >      is asked while diagnosing, not before.
 >   4. The adoption test covers `doctor` in its scratch project, so the command
 >      that certifies an adoption is itself certified by the adoption test.
+
+</details>
+
+### `pipeline-statuses-are-the-orgs-own`
+
+- **title:** An item's status is roadmap-core's fixed six, not the stages the org's work actually moves through
+- **status:** ready
+- **arc:** adoptable-by-anyone
+- **priority:** next
+- **related to** (not a dependency — both are startable):
+  - `claims-move-faster-than-pull-requests` — Built on the served store: a stage change is a write that must not wait for a merge, and the transition log there is where each stage's entry time is read from.
+- **refs:**
+  - `roadmap_core/graph.py STATUSES, derive_status, validate_graph`
+  - `roadmap_core/server.py`
+
+<details><summary>evidence</summary>
+
+> PROPOSED, from the operator's ruling in the org-core session (2026-09-24):
+> "The roadmap item could show 'arbitrary' status which is enumeration of the
+> org's pipeline statuses."
+>
+> READ, roadmap-core 0.3.2: `graph.STATUSES` is a fixed tuple — ready,
+> deferred, blocked, claimed, verifying, done — and `derive_status` returns
+> `ready` for any stored status it does not know, so a stage an org names
+> itself would be silently erased on the first read. `validate_graph` reports
+> any other status as a problem. An org that installs roles (org-core's cast)
+> moves work through more stages than that — dispatched, building, in review,
+> sound, merged, verifying — and a reading of that org can only see them by
+> re-deriving each from other sources.
+>
+> SHAPE: a tenant (or a files-mode repo) declares its statuses; `ready` and
+> `done` must be among them; a declared status that is not one of the derived
+> ones (`ready`, `blocked`, `deferred`, `claimed`) is a stored fact, as
+> `verifying` is today; the default enumeration is today's six, so an org that
+> declares nothing sees no change. Broken looks like: a declared stage read
+> back as `ready`, or an undeclared one accepted.
 
 </details>
 

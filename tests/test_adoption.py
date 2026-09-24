@@ -88,8 +88,10 @@ def run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(PACKAGE_ROOT)
     env["ROADMAP_SOURCE"] = "local"
-    env.pop("LUCILLE_ADMIN_JWT", None)   # no credential
-    env.pop("BACKEND_URL", None)         # and no server to reach
+    for name in ("LUCILLE_ADMIN_JWT", "ROADMAP_API_TOKEN"):   # no credential
+        env.pop(name, None)
+    for name in ("BACKEND_URL", "ROADMAP_API_URL"):          # and no server to reach
+        env.pop(name, None)
     # NOTE: site-packages is still visible to the subprocess. That is why the
     # test above reads the import graph instead of trusting this environment —
     # a stray install here once turned a missing dependency into a green run.

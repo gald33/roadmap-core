@@ -216,11 +216,48 @@ template: almost every line of it is a consequence of Lucille's own deployment,
 and handing an adopter that machinery for a problem they do not have reads as
 required rather than as one option.
 
+### Running a served store yourself: `roadmap serve`
+
+The four rows above assume somebody already runs a server. `roadmap serve` is
+one you can run: stdlib only, one process for many projects ("tenants"), each
+tenant's roadmap its own SQLite file behind the same `/admin/roadmap` API the
+`db` source speaks. A client changes nothing but two variables.
+
+```bash
+# on the server's host: tenants and tokens are managed here, never over HTTP
+roadmap serve --data /srv/roadmap tenant add my-org
+roadmap serve --data /srv/roadmap token create --tenant my-org --label "ci"
+#   prints the token once; the server keeps only its SHA-256
+roadmap serve --data /srv/roadmap run --host 0.0.0.0 --port 8443 \
+    --tls-cert /etc/roadmap/fullchain.pem --tls-key /etc/roadmap/privkey.pem
+
+# wherever the project's sessions run
+export ROADMAP_API_URL=https://roadmap.example.com:8443
+export ROADMAP_API_TOKEN=rmk_...          # LUCILLE_* names are read as fallbacks
+roadmap push --source db && roadmap claim <key> --source db
+```
+
+| Property | How |
+|---|---|
+| Tenants cannot see each other | one SQLite file per tenant; the tenant comes from the token, never the URL |
+| A copied registry holds no credential | tokens are 256 random bits, stored as SHA-256 only, shown once |
+| Least privilege | `read`, `write`, `admin` scopes; `admin` for prune, refile, arc deletion and a forced claim |
+| No token crosses a network in the clear | TLS 1.2+, or loopback behind your own TLS proxy; anything else refuses to start without `--allow-plaintext` |
+| A probe learns nothing | unknown, revoked, expired and disabled-tenant tokens get one identical 401 |
+| Bounded | body cap, no chunked bodies, socket timeout, concurrency cap, per-token and per-address budgets (429 with `Retry-After`) |
+| Accountable | an audit log of every request under the token's id, and a per-tenant transition log: `GET /admin/roadmap/{key}/history`, `GET /admin/roadmap/transitions?after=<id>` |
+
+Operating it is yours: back up `--data` (it is SQLite files: `registry.db` and
+`tenants/*.db`), renew the certificate, and rotate a token by creating the new
+one before revoking the old (`roadmap serve --data … token list | revoke`).
+`impact` answers 501 here: it needs a host's feedback tickets.
+
 ## What is NOT here
 
-HTTP, auth, and the CLI. The graph is pure functions over plain dicts keyed by
-`key`, so the same code serves DB rows, API payloads and parsed YAML with no
-adapter. Lucille's own persistence stays in `backend/app/crud/roadmap.py` over
+HTTP and auth anywhere but `roadmap_core/server.py`. The graph is pure functions
+over plain dicts keyed by `key`, so the same code serves DB rows, API payloads and
+parsed YAML with no adapter; the server is a thin layer over `LocalStore` and the
+graph, and nothing else imports it but the CLI's `serve` command. Lucille's own persistence stays in `backend/app/crud/roadmap.py` over
 SQLAlchemy; the two definitions of the same three tables are held together by
 `backend/tests/test_roadmap_store_parity.py`, which asserts both the columns and
 the row dicts the two readers produce.
