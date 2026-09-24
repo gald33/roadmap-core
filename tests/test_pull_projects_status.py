@@ -56,8 +56,8 @@ def run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(PACKAGE_ROOT)
     env["ROADMAP_SOURCE"] = "local"
-    env.pop("LUCILLE_ADMIN_JWT", None)
-    env.pop("BACKEND_URL", None)
+    for name in ("LUCILLE_ADMIN_JWT", "ROADMAP_API_TOKEN", "ROADMAP_API_URL", "BACKEND_URL"):
+        env.pop(name, None)
     return subprocess.run(
         [sys.executable, "-m", "roadmap_core.cli", *args],
         cwd=cwd, env=env, capture_output=True, text=True, timeout=60,

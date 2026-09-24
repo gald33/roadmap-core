@@ -1,0 +1,35 @@
+id: pipeline-statuses-are-the-orgs-own
+title: An item's status is roadmap-core's fixed six, not the stages the org's work actually moves through
+status: ready
+arc: adoptable-by-anyone
+priority: next
+claim: null
+blocked_on: []
+related_to:
+- key: claims-move-faster-than-pull-requests
+  note: 'Built on the served store: a stage change is a write that must not wait
+    for a merge, and the transition log there is where each stage''s entry time
+    is read from.'
+refs:
+- 'roadmap_core/graph.py STATUSES, derive_status, validate_graph'
+- 'roadmap_core/server.py'
+evidence: |
+  PROPOSED, from the operator's ruling in the org-core session (2026-09-24):
+  "The roadmap item could show 'arbitrary' status which is enumeration of the
+  org's pipeline statuses."
+
+  READ, roadmap-core 0.3.2: `graph.STATUSES` is a fixed tuple — ready,
+  deferred, blocked, claimed, verifying, done — and `derive_status` returns
+  `ready` for any stored status it does not know, so a stage an org names
+  itself would be silently erased on the first read. `validate_graph` reports
+  any other status as a problem. An org that installs roles (org-core's cast)
+  moves work through more stages than that — dispatched, building, in review,
+  sound, merged, verifying — and a reading of that org can only see them by
+  re-deriving each from other sources.
+
+  SHAPE: a tenant (or a files-mode repo) declares its statuses; `ready` and
+  `done` must be among them; a declared status that is not one of the derived
+  ones (`ready`, `blocked`, `deferred`, `claimed`) is a stored fact, as
+  `verifying` is today; the default enumeration is today's six, so an org that
+  declares nothing sees no change. Broken looks like: a declared stage read
+  back as `ready`, or an undeclared one accepted.
