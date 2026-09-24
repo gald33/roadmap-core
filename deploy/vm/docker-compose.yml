@@ -1,9 +1,9 @@
-# roadmap serve on a shared VM: the server, and a Caddy sidecar that owns TLS.
-# Standalone by design — its own project name, network and volumes — so it
-# shares the machine with other stacks but not their compose files or ingress.
+# roadmap serve on a shared VM, behind the Caddy that already owns :443 there.
+# Its own project name and volume, so it shares the machine with other stacks
+# but not their compose files. It joins one network of theirs, the one the
+# host's Caddy is on, because that is how the Caddy reaches it.
 #
-#   cp deploy/vm/.env.example deploy/vm/.env   # then fill it in
-#   docker compose -f deploy/vm/docker-compose.yml up -d --build
+#   deploy/vm/deploy.sh      # build, start, install the site block, verify
 name: roadmap
 
 x-logging: &logging
@@ -13,42 +13,32 @@ x-logging: &logging
     max-file: "5"
 
 services:
-  roadmap:
+  # Named roadmap-serve, not roadmap: the name is a DNS name on a network other
+  # stacks share, and the site block in roadmap.caddyfile addresses it.
+  roadmap-serve:
     build:
       context: ../..
       dockerfile: deploy/vm/Dockerfile
+    image: roadmap-serve:local
+    container_name: roadmap-serve
     restart: unless-stopped
     volumes:
       - roadmap-data:/data
-    # nothing is published: only the sidecar on this network reaches :8765
-    networks: [roadmap]
+    # Nothing is published. The host's Caddy reaches :8765 over the platform
+    # network; the operator reaches the server with `docker exec`.
+    networks: [platform]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
-  caddy:
-    build: ./caddy
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "${ORIGIN_PORT:-8445}:${ORIGIN_PORT:-8445}"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on: [roadmap]
-    networks: [roadmap]
-    cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
-    security_opt: ["no-new-privileges:true"]
-    logging: *logging
-
 networks:
-  roadmap: {}
+  # The network the host's Caddy is on. On the Lucille VM, Lucille's compose
+  # project creates it; `docker network ls` names it on another host.
+  platform:
+    external: true
+    name: ${PLATFORM_NETWORK:-lucille_default}
 
 volumes:
   roadmap-data: {}
-  caddy-data: {}
-  caddy-config: {}

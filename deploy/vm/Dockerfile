@@ -5,6 +5,9 @@
 # running version, with no second place (a registry) that could disagree.
 FROM python:3.12-slim
 
+# deploy.sh removes this image's superseded builds, and no other image, by it.
+LABEL org.opencontainers.image.title=roadmap-serve
+
 # One unprivileged user. It owns /data before the volume is first mounted, so a
 # fresh named volume inherits that ownership and nothing here ever runs as root.
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin roadmap \
@@ -19,10 +22,10 @@ USER roadmap
 VOLUME /data
 EXPOSE 8765
 
-# Plain HTTP inside the compose network only: no port of this container is
-# published, and the Caddy sidecar beside it is the one thing that reaches it.
+# Plain HTTP on the host's private Docker network only. No port of this
+# container is published, and the host's Caddy terminates TLS in front of it.
 # `--allow-plaintext` is the server's own refusal switched off for exactly that
-# case — see deploy/vm/README.md.
+# case. See deploy/vm/README.md.
 ENTRYPOINT ["roadmap", "serve", "--data", "/data"]
 CMD ["run", "--host", "0.0.0.0", "--port", "8765", "--allow-plaintext"]
 

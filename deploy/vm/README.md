@@ -1,66 +1,105 @@
 # `roadmap serve` on a VM
 
-One server for every org's roadmap: the TLS in front of it, the one-time steps,
-and the commands to run it. Files here:
+One server for every org's roadmap, on a VM whose :443 already belongs to
+another stack's Caddy. The server runs in its own container. The host's Caddy
+terminates TLS in front of it, from a site block this repo installs into that
+Caddy's `conf.d/`. Files here:
 
 | File | What it is |
 |---|---|
 | `Dockerfile` | the server, built from this checkout; runs as uid 10001, root filesystem read-only |
-| `caddy/Dockerfile` | Caddy with the Cloudflare DNS module, for a DNS-01 certificate |
-| `Caddyfile` | TLS for `$ROADMAP_HOST` on `$ORIGIN_PORT`, proxying to the server; `Authorization` is deleted from access logs |
-| `docker-compose.yml` | the two, on their own network; only Caddy publishes a port |
-| `.env.example` | the four values the stack needs; copied to `.env`, which is never committed |
+| `docker-compose.yml` | the server alone, on the host Caddy's network; no port published |
+| `roadmap.caddyfile` | the site block: the hostname, a body cap, the proxy to `roadmap-serve:8765` |
+| `deploy.sh` | build, start, install the site block, reload Caddy, check the public URL |
 
 ## The shape
 
 ```
-session ──HTTPS :443──▶ Cloudflare (roadmap.lucille-ai.com, proxied)
-                          │  Origin Rule: destination port → 8445
+session ──HTTPS :443──▶ roadmap.lucille-ai.com  (A record, DNS only)
                           ▼
-                     VM :8445 ── Caddy (Let's Encrypt cert by DNS-01)
-                                   │  compose network only
-                                   ▼
-                              roadmap:8765 ── /data (SQLite: registry + one file per tenant)
+                     VM :443 ── sslh ── lucille-caddy (Let's Encrypt, automatic)
+                                           │  conf.d/roadmap.caddyfile
+                                           │  network lucille_default
+                                           ▼
+                                      roadmap-serve:8765 ── /data (SQLite: registry + one file per tenant)
 ```
 
-This is the shape the switchboard hub already runs on the Lucille VM (Lucille
-`CLAUDE.md`, "Ingress"). Cloudflare on :443 is what makes the server reachable
-from cloud agent sessions, whose egress often allows only standard-port HTTPS.
-DNS-01 is the only ACME challenge that works for an origin on a non-standard
-port. The stack shares the VM with Lucille's own stack, but not its compose
-files, its Caddy or its deploy.
+The same arrangement `nivi.lucille-ai.com` runs on (gald33/nivi, `infra/README.md`):
+the same Cloudflare rule, the same Caddy, and a site block from the service's own
+repo. No Origin Rule, no API token, no second Caddy and no new port. The server
+shares the host Caddy's network, `lucille_default`, and nothing else of
+Lucille's stack.
 
 ## Once: DNS, at Cloudflare
 
-1. An `A` record `roadmap` → the VM's address, **proxied** (orange cloud).
-2. An Origin Rule: hostname equals `roadmap.lucille-ai.com` → destination port `8445`.
-3. SSL/TLS mode **Full (strict)** for that host. The origin's certificate is a
-   real Let's Encrypt one, so strict works.
-4. An API token with `Zone:DNS:Edit` on `lucille-ai.com`, for the DNS-01
-   challenge. The switchboard hub's is scoped the same way.
+An `A` record `roadmap` → `159.65.126.83` in the `lucille-ai.com` zone,
+**grey-clouded (DNS only)**, like `nivi`. Create it before the first deploy:
+Caddy asks Let's Encrypt for the certificate as soon as the site block loads,
+and Let's Encrypt allows only a few failed validations per name per hour.
+
+It must stay grey. Proxied, Cloudflare terminates TLS, so Caddy's TLS-ALPN
+challenge cannot reach it, and "Always Use HTTPS" answers the HTTP-01 challenge
+with a redirect. Caddy then keeps serving the certificate it has and **fails
+renewal silently** until it expires, ninety days on (nivi's README, where this
+was learned).
+
+## Once: the sessions' network access
+
+A cloud session reaches only the hosts its environment allows. Measured
+2026-09-24 from an org-core session: `switchboard.lucille-ai.com` answered;
+`nivi.lucille-ai.com`, `lucille-ai.com`, `example.com` and `www.cloudflare.com`
+were all refused by the session's egress proxy. So the environment allows hosts
+by name, not by how their DNS is served. Add `roadmap.lucille-ai.com` to the
+allowed domains of every environment whose sessions use the server (the
+environment's settings, Network access).
 
 ## Once: the VM
 
+As the `lucille` user, which is in the `docker` group:
+
 ```bash
-ss -ltn | grep -q ':8445 ' && echo "8445 is taken" || echo "8445 is free"   # 8443 is Lucille's Caddy, 8444 the hub
 git clone https://github.com/gald33/roadmap-core ~/roadmap-core
-cd ~/roadmap-core && git checkout <release tag or commit>    # the image is built from what is checked out
-cp deploy/vm/.env.example deploy/vm/.env && chmod 600 deploy/vm/.env
-$EDITOR deploy/vm/.env                                      # ACME_EMAIL, CLOUDFLARE_API_TOKEN
-docker compose -f deploy/vm/docker-compose.yml up -d --build
-curl -s https://roadmap.lucille-ai.com/healthz              # {"ok":true}
+git -C ~/roadmap-core checkout <release tag or commit>   # the image is built from what is checked out
+~/roadmap-core/deploy/vm/deploy.sh
 ```
 
-If the host firewall filters inbound ports, open `8445/tcp` to Cloudflare. If a
-per-source connection limit guards the hub's `:8444`, extend it to `:8445`.
+`deploy.sh` stops before building anything if one of these is missing: Docker,
+the `lucille_default` network, `/opt/lucille/caddy/conf.d`, the `lucille-caddy`
+container, or 1 GB free on `/`. It refuses to build rather than prune, because
+the disk is shared and the other tenants' images are not its to delete. Then it:
+
+1. builds and starts `roadmap-serve`;
+2. waits for `/healthz` inside the container;
+3. copies `roadmap.caddyfile` to `/opt/lucille/caddy/conf.d/` and runs
+   `caddy reload` in `lucille-caddy` (a reload, so no live connection drops). If
+   Caddy rejects it, the file is taken back out of `conf.d/`: left there, it
+   would fail the whole config at Caddy's next restart, and every site on the box
+   would go down with it;
+4. checks `https://roadmap.lucille-ai.com/healthz` from the VM until it answers
+   `{"ok":true}`, for up to two minutes. On a first deploy, that is the time
+   Caddy takes to get the certificate.
+
+Set `PLATFORM_NETWORK`, `PLATFORM_CADDY_CONFD`, `PLATFORM_CADDY_CONTAINER` or
+`MIN_DISK_FREE_MB` to run it on a host where those differ.
+
+### What it looks like when it breaks
+
+- **`curl` exit 35, `tlsv1 alert internal error`**: Caddy has no certificate for
+  the name. Either the site block is missing from `conf.d/`, or the certificate
+  was never issued. The container is fine meanwhile. `deploy.sh` says which to
+  check.
+- **The site block vanished after a Lucille deploy**: Lucille's deploy runs
+  `git clean -fd` in `/opt/lucille`. `conf.d/*.caddyfile` survives it only
+  because Lucille's `.gitignore` ignores it (gald33/Lucille#1417). Re-run
+  `deploy.sh` to put the block back.
 
 ## Tenants and tokens, on the VM
 
-Managed here and never over HTTP. A token is printed once, and the server keeps
-only its SHA-256.
+These are managed on the host and never over HTTP. A token is printed once, and
+the server keeps only its SHA-256.
 
 ```bash
-roadmap_admin() { docker compose -f ~/roadmap-core/deploy/vm/docker-compose.yml exec roadmap roadmap serve --data /data "$@"; }
+roadmap_admin() { docker exec roadmap-serve roadmap serve --data /data "$@"; }
 roadmap_admin tenant add org-core
 roadmap_admin token create --tenant org-core --label "wren (ceo)"            # read,write
 roadmap_admin token create --tenant org-core --label "operator" --scopes read,write,admin
@@ -76,27 +115,28 @@ ROADMAP_API_URL=https://roadmap.lucille-ai.com
 ROADMAP_API_TOKEN=rmk_…
 ```
 
-`roadmap push --source db` seeds the tenant from the org's `roadmap/items/`, and
-`roadmap claim|release|status --source db` then write to it with no pull request.
+`roadmap push --source db` seeds the tenant from the org's `roadmap/items/`.
+After that, `roadmap claim|release|status --source db` writes to it with no pull
+request.
 
 ## Upgrade
 
 ```bash
-cd ~/roadmap-core && git fetch && git checkout <new tag or commit>
-docker compose -f deploy/vm/docker-compose.yml up -d --build
+git -C ~/roadmap-core fetch && git -C ~/roadmap-core checkout <new tag or commit>
+~/roadmap-core/deploy/vm/deploy.sh
 ```
 
-The data volume is kept. The schema is created on open (`CREATE TABLE IF NOT
-EXISTS`), not migrated.
+The data volume `roadmap_roadmap-data` is kept. The schema is created on open
+(`CREATE TABLE IF NOT EXISTS`); nothing migrates it. `deploy.sh` removes the
+image each build replaces, and only that image.
 
 ## Backup
 
-An online copy, safe while the server runs (SQLite's backup API), into the
-volume. Then copy it off the box:
+This makes an online copy into the volume, safe while the server runs (it uses
+SQLite's backup API). Then copy the backup off the box:
 
 ```bash
-cd ~/roadmap-core
-docker compose -f deploy/vm/docker-compose.yml exec -T roadmap python -c '
+docker exec -i roadmap-serve python -c '
 import datetime, os, pathlib, sqlite3
 os.umask(0o077)
 out = pathlib.Path("/data/backups") / datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -106,14 +146,30 @@ for p in [pathlib.Path("/data/registry.db"), *sorted(pathlib.Path("/data/tenants
         src.backup(dst)
     print(out / p.name)
 '
-docker compose -f deploy/vm/docker-compose.yml cp roadmap:/data/backups ./roadmap-backups
+docker cp roadmap-serve:/data/backups ./roadmap-backups
 ```
 
 ## Known limits
 
-- **Every client arrives from Caddy's address.** The server's per-address budget
-  for *failed* authentication (20, then one every 5 s) is therefore shared by all
-  clients. A valid token never spends it. The server does not read
-  `X-Forwarded-For`, by design: a header a client can set is not an address.
+- **Every client arrives from Caddy's address.** The server's budget for
+  *failed* authentication (20 attempts, then one every 5 s) is kept per address,
+  so all clients share it. A valid token never spends it. The server does not
+  read `X-Forwarded-For`, by design: a header a client can set is not an
+  address.
+- **The server shares a network with Lucille's containers.** They can reach
+  `roadmap-serve:8765` without TLS, and it can reach them. A token is still
+  required for everything but `/healthz`. The network is the price of sharing
+  the host's Caddy, the same price nivi pays.
+- **Per-source connection ceiling on :443.** `lucille-connlimit` caps each
+  source address at 40 concurrent connections to :443 by default (Lucille's
+  `docker-compose.vm.yml`), shared with every other site on the box. Cloud sessions reach the box from a few shared egress
+  addresses. The client opens one short connection per call.
+- **A body over 1 MiB is refused, but not every client sees the 413.** Caddy
+  answers 413 from the declared `Content-Length` before proxying (the server
+  would answer 413 too, and behind a proxy that reached curl as a 502). curl
+  reads the answer while it is still sending and prints the 413. Python's
+  `urllib`, which the `roadmap` CLI uses, sends the whole body first. Caddy has
+  closed the connection by then, so the CLI reports `Connection reset by peer`
+  (measured 2026-09-24: roadmap-core 0.4.0, Caddy v2.11.4, Python 3.12).
 - **`impact` answers 501.** It needs a host's feedback tickets.
-- **Container logs are capped** at 50 MB × 5 per service.
+- **Container logs are capped** at 50 MB × 5.
