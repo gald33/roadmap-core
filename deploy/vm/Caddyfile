@@ -1,0 +1,24 @@
+# TLS for the roadmap server. Cloudflare proxies ROADMAP_HOST on :443 and an
+# Origin Rule sends it to ORIGIN_PORT here; the certificate comes from Let's
+# Encrypt by DNS-01, so no inbound :80/:443 is needed on this origin.
+{
+	email {$ACME_EMAIL}
+}
+
+{$ROADMAP_HOST}:{$ORIGIN_PORT} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	# the server caps bodies at 1 MiB too; refusing them here spares it the read
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy roadmap:8765
+	log {
+		output stdout
+		# the Authorization header is a bearer token: never logged
+		format filter {
+			request>headers>Authorization delete
+		}
+	}
+}

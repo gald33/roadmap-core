@@ -1,0 +1,10 @@
+# The image needs pyproject.toml, README.md, LICENSE, roadmap_core/ and
+# templates/ only (deploy/vm/Dockerfile). Everything else stays out of the
+# build context — above all a local deploy/vm/.env, which holds a token.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!roadmap_core/
+!templates/
+roadmap_core/__pycache__/

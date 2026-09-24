@@ -17,3 +17,6 @@ roadmap/roadmap.db
 .repoctx/
 .claude/*.local.json
 **/.claude/settings.local.json
+
+# deploy/vm/.env holds the Cloudflare token
+deploy/vm/.env
