@@ -1,0 +1,44 @@
+# roadmap serve on a shared VM, behind the Caddy that already owns :443 there.
+# Its own project name and volume, so it shares the machine with other stacks
+# but not their compose files. It joins one network of theirs, the one the
+# host's Caddy is on, because that is how the Caddy reaches it.
+#
+#   deploy/vm/deploy.sh      # build, start, install the site block, verify
+name: roadmap
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  # Named roadmap-serve, not roadmap: the name is a DNS name on a network other
+  # stacks share, and the site block in roadmap.caddyfile addresses it.
+  roadmap-serve:
+    build:
+      context: ../..
+      dockerfile: deploy/vm/Dockerfile
+    image: roadmap-serve:local
+    container_name: roadmap-serve
+    restart: unless-stopped
+    volumes:
+      - roadmap-data:/data
+    # Nothing is published. The host's Caddy reaches :8765 over the platform
+    # network; the operator reaches the server with `docker exec`.
+    networks: [platform]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+networks:
+  # The network the host's Caddy is on. On the Lucille VM, Lucille's compose
+  # project creates it; `docker network ls` names it on another host.
+  platform:
+    external: true
+    name: ${PLATFORM_NETWORK:-lucille_default}
+
+volumes:
+  roadmap-data: {}

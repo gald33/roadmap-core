@@ -1,0 +1,26 @@
+# The roadmap server's site block, for the Caddy that already owns :443 on the
+# host (Lucille's, behind sslh). `deploy.sh` copies this file into that Caddy's
+# conf.d/ and reloads it. The site address on the first line is the one place
+# the hostname is set; `deploy.sh` reads it from here.
+#
+# The certificate is Caddy's automatic Let's Encrypt one, issued once DNS points
+# here. The record must stay grey-clouded (DNS only): see deploy/vm/README.md.
+#
+# There is deliberately no `log` directive. Without one Caddy writes no access
+# log for this site, so no bearer token in an Authorization header is ever
+# written anywhere.
+roadmap.lucille-ai.com {
+	# A declared body over 1 MiB (1048576 bytes, the server's own cap) is refused
+	# here, with the server's own answer. The server refuses it too, but before
+	# reading it and then closing the connection, which breaks the proxy's upload,
+	# so through a proxy that refusal reached the client as a 502. The pattern
+	# matches exactly the integers above 1048576 (checked against 0..12,000,000).
+	@too_large header_regexp Content-Length ^0*([1-9][0-9]{7,}|[2-9][0-9]{6}|1[1-9][0-9]{5}|10[5-9][0-9]{4}|1049[0-9]{3}|1048[6-9][0-9]{2}|10485[89][0-9]|104857[7-9])$
+	handle @too_large {
+		header Content-Type application/json
+		respond `{"detail":"a body is at most 1048576 bytes"}` 413
+	}
+	handle {
+		reverse_proxy roadmap-serve:8765
+	}
+}

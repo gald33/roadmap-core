@@ -247,6 +247,11 @@ roadmap push --source db && roadmap claim <key> --source db
 | Bounded | body cap, no chunked bodies, socket timeout, concurrency cap, per-token and per-address budgets (429 with `Retry-After`) |
 | Accountable | an audit log of every request under the token's id, and a per-tenant transition log: `GET /admin/roadmap/{key}/history`, `GET /admin/roadmap/transitions?after=<id>` |
 
+To run it on a VM behind a Caddy that already serves :443 there, see
+[`deploy/vm/README.md`](deploy/vm/README.md): the files, the one-time DNS and VM steps,
+the deploy script, and the admin, upgrade and backup commands, each run end to end
+against a stand-in for that Caddy before it was written.
+
 Operating it is yours: back up `--data` (it is SQLite files: `registry.db` and
 `tenants/*.db`), renew the certificate, and rotate a token by creating the new
 one before revoking the old (`roadmap serve --data … token list | revoke`).

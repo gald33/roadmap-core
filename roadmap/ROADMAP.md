@@ -481,10 +481,17 @@ graph TD
 > only requests in flight), `since` was compared as text with its offset left
 > in, and a request line could forge a log line.
 >
-> STILL INFERRED: that an org's sessions use it. No tenant is running yet — the
-> host is the operator's to choose. This item moves to `done` when one org's
-> sessions have claimed and released through a running server and the
-> transition log shows it.
+> THE HOST, chosen by the operator 2026-09-24 ("let's put it on the vm. we can
+> issue a subdomain too"): roadmap.lucille-ai.com on the Lucille VM, behind the
+> Caddy that already serves :443 there, with a grey-clouded A record like
+> nivi's. `deploy/vm/` carries it: `deploy.sh` was run end to end against a
+> stand-in for that Caddy (a `lucille_default` network, a `lucille-caddy` that
+> imports conf.d, Caddy v2.11.4), and the `roadmap` CLI, run through it,
+> claimed and released an item that the transition log recorded.
+>
+> STILL INFERRED: that an org's sessions use it. No tenant is running yet.
+> This item moves to `done` when one org's sessions have claimed and released
+> through the running server and the transition log shows it.
 
 </details>
 
