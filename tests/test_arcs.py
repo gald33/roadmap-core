@@ -21,6 +21,8 @@ count-based check calls that success drift, on every prune, forever.
 
 from __future__ import annotations
 
+import argparse
+
 import pytest
 
 from roadmap_core import graph
@@ -322,3 +324,160 @@ def test_arc_narrative_churn_is_not_reported_as_drift():
     db = {"x": arc("x", narrative="one wording")}
     files = {"x": arc("x", narrative="a different wording entirely")}
     assert graph.compare_arc_sources(db, files) == []
+
+
+# --- the verifying veto, and what it hides ----------------------------------
+#
+# `arc_findings` skips any arc holding at least one `verifying` item, and that
+# exclusion is sound and measured (see the test above: 4 of 13 first-run
+# findings, a 31% false-positive rate). What was never costed is that it is a
+# SINGLE-ITEM VETO OVER A WHOLE ARC. One item shelved as `verifying` silences
+# the arc's finding for every OTHER item in it, and `verifying` is precisely the
+# status items get stuck on wrongly — Lucille's own `roadmap-arcs-internalized`
+# sat there for a month while what remained was work, not evidence.
+#
+# The fix is NOT to weaken the veto: an arc whose whole tail is an observation
+# is exactly what the exclusion is for, and the loud finding's advice ("un-park
+# one, or declare it blocked") is wrong for it. What is missing is that a
+# suppressed arc and a healthy one produce identical output. So the coupling
+# gets its own quieter channel, and `arc_findings` is left alone.
+
+
+def test_a_verifying_item_hiding_other_parked_items_is_reported_as_suppressed():
+    """THE DEFECT. Two items nobody can pick up, and no artifact says so.
+
+    The arc derives `open`, offers nothing startable, and holds one `verifying`
+    item plus a deferred one. `arc_findings` is silent — correctly, it cannot
+    tell a settling arc from a stuck one — so the deferred item is invisible at
+    arc level. `arc_suppressions` is where that becomes readable.
+    """
+    by_key, arcs = graphs(
+        [
+            item("shipped", arc="x", status="verifying"),
+            item("parked", arc="x", status="deferred", defer_reason="waiting on a call"),
+        ],
+        [arc("x")],
+    )
+
+    assert graph.arc_findings(arcs, by_key) == [], "the veto itself is unchanged"
+
+    suppressed = graph.arc_suppressions(arcs, by_key)
+    assert len(suppressed) == 1
+    assert "x" in suppressed[0]
+    assert "shipped" in suppressed[0], "name the item holding the veto"
+    assert "parked" in suppressed[0], "name what is hidden behind it"
+
+
+def test_an_arc_whose_whole_tail_is_verifying_is_not_reported_as_suppressed():
+    """THE CONTROL THAT KEEPS THIS FROM BECOMING THE THING IT REPLACED.
+
+    Nothing is hidden here: every unfinished item is `verifying`, so the arc is
+    awaiting confirmation in full and the exclusion is doing exactly its job.
+    Reporting it would recreate the 31% noise one channel over, which is how a
+    quiet report becomes an ignored one.
+    """
+    by_key, arcs = graphs(
+        [
+            item("a", arc="x", status="verifying"),
+            item("b", arc="x", status="verifying"),
+        ],
+        [arc("x")],
+    )
+
+    assert graph.arc_findings(arcs, by_key) == []
+    assert graph.arc_suppressions(arcs, by_key) == []
+
+
+def test_an_arc_already_reported_as_a_finding_is_not_also_reported_as_suppressed():
+    """The two channels partition: nothing is suppressed that was already said
+    out loud. Without this, a fully-parked arc would appear twice."""
+    by_key, arcs = graphs(
+        [item("a", arc="x", status="deferred", defer_reason="not yet")], [arc("x")]
+    )
+
+    assert graph.arc_findings(arcs, by_key) != []
+    assert graph.arc_suppressions(arcs, by_key) == []
+
+
+def test_an_arc_offering_startable_work_is_not_reported_as_suppressed():
+    """The control that stops this passing vacuously by flagging every arc."""
+    by_key, arcs = graphs(
+        [item("a", arc="x"), item("b", arc="x", status="verifying")], [arc("x")]
+    )
+
+    assert graph.startable_in_arc("x", by_key) != []
+    assert graph.arc_suppressions(arcs, by_key) == []
+
+
+def test_a_blocked_item_behind_the_veto_is_reported_too():
+    """`blocked` and `deferred` are both hidden work, and a mixed arc is the
+    shape measured in the wild: Lucille's `self-revising-preferences` was
+    blocked×2, deferred×1, verifying×1 on 2026-09-20 and said nothing."""
+    by_key, arcs = graphs(
+        [
+            item("shipped", arc="x", status="verifying"),
+            item("stuck", arc="x", blocked_on=["nowhere"]),
+        ],
+        [arc("x")],
+    )
+
+    suppressed = graph.arc_suppressions(arcs, by_key)
+    assert len(suppressed) == 1
+    assert "stuck" in suppressed[0]
+
+
+def test_suppressions_are_rendered_where_findings_are():
+    """A channel nothing renders is the invisibility this fixes, one layer on."""
+    by_key, arcs = graphs(
+        [
+            item("shipped", arc="x", status="verifying"),
+            item("parked", arc="x", status="deferred", defer_reason="waiting"),
+        ],
+        [arc("x")],
+    )
+
+    out = graph.render_arcs_markdown(arcs, by_key)
+
+    assert "shipped" in out and "parked" in out
+    assert out.index("awaiting confirmation") < out.index("## Legend")
+
+
+def test_validate_surfaces_a_suppression_on_stderr_without_failing(capsys, monkeypatch):
+    """WIRED, not merely present. A channel no entry point invokes is the same
+    invisibility one layer out — and `validate` is what CI and every session
+    actually run."""
+    from roadmap_core import cli
+
+    by_key, arcs = graphs(
+        [
+            item("shipped", arc="x", status="verifying"),
+            item("parked", arc="x", status="deferred", defer_reason="waiting"),
+        ],
+        [arc("x")],
+    )
+    monkeypatch.setattr(cli, "load", lambda source: by_key)
+    monkeypatch.setattr(cli, "load_arcs", lambda source: arcs)
+
+    code = cli.cmd_validate(argparse.Namespace(source="files"))
+    captured = capsys.readouterr()
+
+    assert code == 0, "a vetoed arc is not a malformed graph"
+    assert "suppressed:" in captured.err
+    assert "finding:" not in captured.err, "the loud channel stays silent"
+    assert "1 suppressed" in captured.out
+
+
+def test_validate_says_nothing_when_the_veto_hides_nothing(capsys, monkeypatch):
+    """The control for the test above, at the same entry point."""
+    from roadmap_core import cli
+
+    by_key, arcs = graphs([item("a", arc="x", status="verifying")], [arc("x")])
+    monkeypatch.setattr(cli, "load", lambda source: by_key)
+    monkeypatch.setattr(cli, "load_arcs", lambda source: arcs)
+
+    code = cli.cmd_validate(argparse.Namespace(source="files"))
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert "suppressed" not in captured.err
+    assert "suppressed" not in captured.out

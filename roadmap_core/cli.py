@@ -2093,10 +2093,18 @@ def cmd_validate(args: argparse.Namespace) -> int:
     findings = graph.arc_findings(arcs, by_key)
     for finding in findings:
         print(f"finding: {finding}", file=sys.stderr)
+    # Quieter still, and on purpose: an arc the `verifying` veto silenced while
+    # other unfinished work sat behind it. Not a finding — the veto is usually
+    # right — but a suppressed arc and a healthy one printed the same nothing
+    # until this line existed. See `graph.arc_suppressions`.
+    suppressed = graph.arc_suppressions(arcs, by_key)
+    for line in suppressed:
+        print(f"suppressed: {line}", file=sys.stderr)
     if not problems:
         print(
             f"ok — {len(by_key)} item(s), {len(arcs)} arc(s), no problems"
             + (f" ({len(findings)} finding(s), see above)" if findings else "")
+            + (f" ({len(suppressed)} suppressed, see above)" if suppressed else "")
         )
         return 0
     for problem in problems:

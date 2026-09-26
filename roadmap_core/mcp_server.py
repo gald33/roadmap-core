@@ -374,6 +374,10 @@ def tool_validate(source: str | None = None) -> dict[str, Any]:
         # Never a failure. An arc with no startable work describes a thin
         # backlog, not a malformed graph — see `graph.arc_findings`.
         "findings": graph.arc_findings(arcs, by_key),
+        # Arcs the `verifying` veto silenced while other unfinished work sat
+        # behind it — reported separately so it is visible without weakening
+        # the veto. See `graph.arc_suppressions`.
+        "suppressions": graph.arc_suppressions(arcs, by_key),
     }
 
 
