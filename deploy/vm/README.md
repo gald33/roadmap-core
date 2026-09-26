@@ -115,6 +115,41 @@ ROADMAP_API_URL=https://roadmap.lucille-ai.com
 ROADMAP_API_TOKEN=rmk_…
 ```
 
+### People who work across orgs: user tokens (0.5.0)
+
+When one cloud environment serves every repository a person works in, a tenant
+token per org cannot be kept apart: the environment holds one
+`ROADMAP_API_TOKEN`, and it is every repository's. (Measured 2026-09-26: Lucille's
+token set there made org-core's sessions read Lucille's roadmap.) So give the
+person one **user token**, grant the user each tenant, and let each repository
+name its own tenant:
+
+```bash
+roadmap_admin user add gal --label "gal (operator)"
+roadmap_admin user grant gal --tenant org-core                  # read,write
+roadmap_admin user grant gal --tenant lucille
+roadmap_admin token create --user gal --label "gal's sessions"   # printed once
+roadmap_admin user add fleet --label "org-command fleet reader"
+roadmap_admin user grant fleet --tenant org-core --scopes read
+roadmap_admin user grant fleet --tenant lucille --scopes read
+roadmap_admin token create --user fleet --label "org-command (VM)" --scopes read
+roadmap_admin user list
+```
+
+The environment holds the one token; each repository sets its tenant, which is
+not a secret (org-core's setup hook exports `ROADMAP_TENANT` from the org's id):
+
+```bash
+ROADMAP_API_URL=https://roadmap.lucille-ai.com
+ROADMAP_API_TOKEN=rmk_…          # the user token, the same in every repository
+ROADMAP_TENANT=org-core          # per repository; sent as X-Roadmap-Tenant
+```
+
+A user token reaches only the tenants its user holds a grant on, with the token's
+scopes meeting the grant's. A request naming no tenant, or one with no grant,
+gets the same 401 a bad token does. Tenant tokens keep working unchanged, and a
+tenant token that names a tenant other than its own is refused.
+
 `roadmap push --source db` seeds the tenant from the org's `roadmap/items/`.
 After that, `roadmap claim|release|status --source db` writes to it with no pull
 request.

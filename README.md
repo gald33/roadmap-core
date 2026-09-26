@@ -234,12 +234,14 @@ roadmap serve --data /srv/roadmap run --host 0.0.0.0 --port 8443 \
 # wherever the project's sessions run
 export ROADMAP_API_URL=https://roadmap.example.com:8443
 export ROADMAP_API_TOKEN=rmk_...          # LUCILLE_* names are read as fallbacks
+export ROADMAP_TENANT=my-org              # needed with a user token (`token create --user`), sent as X-Roadmap-Tenant
 roadmap push --source db && roadmap claim <key> --source db
 ```
 
 | Property | How |
 |---|---|
-| Tenants cannot see each other | one SQLite file per tenant; the tenant comes from the token, never the URL |
+| Tenants cannot see each other | one SQLite file per tenant; a tenant token's tenant comes from the token, never the URL |
+| One person, many orgs (0.5.0) | a user token and a grant per tenant; each request names its tenant (`X-Roadmap-Tenant`, from `ROADMAP_TENANT`) and is served only inside the user's grants, with the token's scopes meeting the grant's |
 | A copied registry holds no credential | tokens are 256 random bits, stored as SHA-256 only, shown once |
 | Least privilege | `read`, `write`, `admin` scopes; `admin` for prune, refile, arc deletion and a forced claim |
 | No token crosses a network in the clear | TLS 1.2+, or loopback behind your own TLS proxy; anything else refuses to start without `--allow-plaintext` |
