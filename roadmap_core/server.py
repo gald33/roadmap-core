@@ -13,10 +13,21 @@ source already speak, so a client changes nothing but a URL and a token.
 **Many tenants, one file each.** A tenant is an id, and its roadmap is its own
 SQLite file, ``<data>/tenants/<id>.db``. Isolation is a file boundary, not a
 ``WHERE`` clause, so no query this module gets wrong can read another tenant's
-rows. Which tenant a request is for is decided by its token and nothing else:
-the URL carries no tenant, so there is no second place to disagree with the
-first — the confused-deputy shape of "token for A, path naming B" cannot be
-written.
+rows. Which tenant a request is for is decided by its token: a *tenant token*
+is bound to one tenant, and the URL carries no tenant, so there is no second
+place to disagree with the first.
+
+**People, not only tenants (0.5.0).** A *user token* names a person, not a
+tenant: one secret for everyone who works across several orgs, where one cloud
+environment is shared by all of them and a tenant token per org cannot be kept
+apart (the operator, 2026-09-26: "we don't need token per org. we need token per
+user … that should be resolved from the token"). A user holds grants, a scope
+set per tenant, and a request made with a user token names its tenant in
+``X-Roadmap-Tenant`` — which the server only honours inside the user's grants:
+a tenant the user holds no grant on, a disabled one, or none named answer as a
+bad token would. The effective scopes are the token's cap intersected with the
+grant. A tenant token that also sends the header must name its own tenant, so the
+confused-deputy shape of "token for A, header naming B" is refused, not obeyed.
 
 **The threat model, in the order the handler enforces it.**
 
@@ -42,8 +53,8 @@ written.
   store never kept: when an item was claimed, by whom, and when it moved on.
 * *Surface.* JSON only: no HTML error pages, no CORS, no Python version in
   ``Server``, ``Cache-Control: no-store``, and a 500 that carries a reference id
-  rather than a traceback. Tenants and tokens are managed from the server's own
-  host (``roadmap serve tenant|token``), never over HTTP: whoever can write the
+  rather than a traceback. Tenants, users, grants and tokens are managed from the
+  server's own host (``roadmap serve tenant|user|token``), never over HTTP: whoever can write the
   data directory already owns everything in it, so an HTTP door to the same
   place would only add a second way in.
 
@@ -106,6 +117,8 @@ MAX_KEY_LEN = 200
 RESERVED_KEYS = frozenset({"arcs", "prunes", "ready", "transitions"})
 
 TOKEN_PREFIX = "rmk_"
+#: the header a user token's request names its tenant in (0.5.0); a tenant token may send it, naming its own
+TENANT_HEADER = "X-Roadmap-Tenant"
 MAX_TOKEN_LEN = 128
 MAX_LABEL_LEN = 80
 MAX_BODY_BYTES = 1 << 20          # an item's evidence is prose; a megabyte is generous
@@ -137,6 +150,36 @@ REGISTRY_SCHEMA = (
     CREATE TABLE IF NOT EXISTS tokens (
         id           TEXT PRIMARY KEY,
         tenant       TEXT NOT NULL REFERENCES tenants (id),
+        hash         TEXT NOT NULL UNIQUE,
+        scopes       TEXT NOT NULL,
+        label        TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        expires_at   TEXT,
+        revoked_at   TEXT,
+        last_used_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        id          TEXT PRIMARY KEY,
+        label       TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        disabled_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS grants (
+        user        TEXT NOT NULL REFERENCES users (id),
+        tenant      TEXT NOT NULL REFERENCES tenants (id),
+        scopes      TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        PRIMARY KEY (user, tenant)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_tokens (
+        id           TEXT PRIMARY KEY,
+        user         TEXT NOT NULL REFERENCES users (id),
         hash         TEXT NOT NULL UNIQUE,
         scopes       TEXT NOT NULL,
         label        TEXT NOT NULL,
@@ -203,6 +246,21 @@ def _hash(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
+def _scopes(scopes: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    wanted = tuple(dict.fromkeys(s.strip() for s in scopes if s.strip()))
+    unknown = [s for s in wanted if s not in SCOPES]
+    if unknown or not wanted:
+        raise RegistryError(f"scopes must be some of {', '.join(SCOPES)}; got {list(scopes)}")
+    return wanted
+
+
+def _label(label: str) -> str:
+    label = (label or "").strip()
+    if not label or len(label) > MAX_LABEL_LEN or not label.isprintable():
+        raise RegistryError(f"a label is 1-{MAX_LABEL_LEN} printable characters — say who holds the token")
+    return label
+
+
 def _private(path: Path) -> None:
     """Owner-only, for the registry, every tenant file and SQLite's WAL beside it."""
     for p in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
@@ -217,12 +275,14 @@ def _private(path: Path) -> None:
 
 @dataclass(frozen=True)
 class Principal:
-    """Who a request is: one token, bound to one tenant, with its scopes."""
+    """Who a request is: one token and the tenant it acts in, with its scopes — for a user token, the tenant the
+    request named and the scopes its grant and the token both allow."""
 
     tenant: str
     token_id: str
     scopes: frozenset[str]
     label: str
+    user: str | None = None
 
     @property
     def actor(self) -> str:
@@ -316,6 +376,83 @@ class Registry:
         _private(path)
         return local
 
+    # -- users and their grants (0.5.0)
+
+    def add_user(self, user: str, *, label: str) -> None:
+        if not TENANT_RE.match(user or ""):
+            raise RegistryError(f"{user!r} is not a user id: lower-case letters, digits and hyphens, "
+                                "1-63 characters, starting with a letter or digit")
+        label = _label(label)
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute("INSERT INTO users (id, label, created_at) VALUES (?, ?, ?)",
+                             (user, label, _iso(_now())))
+            except sqlite3.IntegrityError as exc:
+                raise RegistryError(f"user {user!r} already exists") from exc
+
+    def users(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as conn:
+            users = [dict(r) for r in conn.execute("SELECT * FROM users ORDER BY id").fetchall()]
+            grants = conn.execute("SELECT user, tenant, scopes FROM grants ORDER BY user, tenant").fetchall()
+        for u in users:
+            u["grants"] = {g["tenant"]: json.loads(g["scopes"]) for g in grants if g["user"] == u["id"]}
+        return users
+
+    def disable_user(self, user: str) -> bool:
+        """Every token of a disabled user answers 401 from the next request on."""
+        with closing(self._connect()) as conn:
+            cur = conn.execute("UPDATE users SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
+                               (_iso(_now()), user))
+        return cur.rowcount > 0
+
+    def enable_user(self, user: str) -> bool:
+        with closing(self._connect()) as conn:
+            cur = conn.execute("UPDATE users SET disabled_at = NULL WHERE id = ?", (user,))
+        return cur.rowcount > 0
+
+    def grant(self, user: str, tenant: str, scopes: tuple[str, ...] | list[str] = DEFAULT_SCOPES) -> None:
+        """Give ``user`` ``scopes`` on ``tenant``; a second grant on the same tenant replaces the first."""
+        wanted = _scopes(scopes)
+        with closing(self._connect()) as conn:
+            if conn.execute("SELECT 1 FROM users WHERE id = ?", (user,)).fetchone() is None:
+                raise RegistryError(f"no user {user!r} — add it first")
+            if conn.execute("SELECT 1 FROM tenants WHERE id = ?", (tenant,)).fetchone() is None:
+                raise RegistryError(f"no tenant {tenant!r} — add it first")
+            conn.execute("INSERT INTO grants (user, tenant, scopes, created_at) VALUES (?, ?, ?, ?)"
+                         " ON CONFLICT (user, tenant) DO UPDATE SET scopes = excluded.scopes",
+                         (user, tenant, json.dumps(list(wanted)), _iso(_now())))
+
+    def revoke_grant(self, user: str, tenant: str) -> bool:
+        with closing(self._connect()) as conn:
+            cur = conn.execute("DELETE FROM grants WHERE user = ? AND tenant = ?", (user, tenant))
+        return cur.rowcount > 0
+
+    def create_user_token(self, user: str, *, label: str,
+                          scopes: tuple[str, ...] | list[str] = DEFAULT_SCOPES,
+                          expires_days: float | None = None) -> tuple[str, str]:
+        """``(token_id, secret)`` for a person. ``scopes`` caps what any grant allows through this token — a
+        ``read`` user token reads every tenant its user holds a grant on, and writes none."""
+        wanted = _scopes(scopes)
+        label = _label(label)
+        if expires_days is not None and expires_days <= 0:
+            raise RegistryError("expires_days must be positive, or omitted for no expiry")
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT disabled_at FROM users WHERE id = ?", (user,)).fetchone()
+            if row is None:
+                raise RegistryError(f"no user {user!r} — add it first")
+            if row["disabled_at"]:
+                raise RegistryError(f"user {user!r} is disabled")
+            secret = TOKEN_PREFIX + secrets.token_urlsafe(32)
+            token_id = "utk_" + secrets.token_hex(6)
+            now = _now()
+            expires = _iso(now + _dt.timedelta(days=expires_days)) if expires_days else None
+            conn.execute(
+                "INSERT INTO user_tokens (id, user, hash, scopes, label, created_at, expires_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (token_id, user, _hash(secret), json.dumps(list(wanted)), label, _iso(now), expires),
+            )
+        return token_id, secret
+
     # -- tokens
 
     def create_token(
@@ -327,14 +464,8 @@ class Registry:
         expires_days: float | None = None,
     ) -> tuple[str, str]:
         """``(token_id, secret)``. The secret is returned once and never stored."""
-        wanted = tuple(dict.fromkeys(s.strip() for s in scopes if s.strip()))
-        unknown = [s for s in wanted if s not in SCOPES]
-        if unknown or not wanted:
-            raise RegistryError(f"scopes must be some of {', '.join(SCOPES)}; got {list(scopes)}")
-        label = (label or "").strip()
-        if not label or len(label) > MAX_LABEL_LEN or not label.isprintable():
-            raise RegistryError(f"a label is 1-{MAX_LABEL_LEN} printable characters — "
-                                "say who holds the token")
+        wanted = _scopes(scopes)
+        label = _label(label)
         if expires_days is not None and expires_days <= 0:
             raise RegistryError("expires_days must be positive, or omitted for no expiry")
         with closing(self._connect()) as conn:
@@ -365,24 +496,34 @@ class Registry:
             args = (tenant,)
         with closing(self._connect()) as conn:
             rows = conn.execute(sql + " ORDER BY tenant, created_at", args).fetchall()
-        return [dict(r, scopes=json.loads(r["scopes"])) for r in rows]
+            out = [dict(r, user=None, scopes=json.loads(r["scopes"])) for r in rows]
+            if not tenant:
+                urows = conn.execute("SELECT id, user, scopes, label, created_at, expires_at, revoked_at,"
+                                     " last_used_at FROM user_tokens ORDER BY user, created_at").fetchall()
+                out += [dict(r, tenant=None, scopes=json.loads(r["scopes"])) for r in urows]
+        return out
 
     def revoke_token(self, token_id: str) -> bool:
+        table = "user_tokens" if str(token_id).startswith("utk_") else "tokens"
         with closing(self._connect()) as conn:
             cur = conn.execute(
-                "UPDATE tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                f"UPDATE {table} SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
                 (_iso(_now()), token_id),
             )
         return cur.rowcount > 0
 
-    def authenticate(self, secret: str) -> Principal | None:
-        """The principal a bearer token names, or ``None`` for every kind of no.
+    def authenticate(self, secret: str, tenant: str | None = None) -> Principal | None:
+        """The principal a bearer token names, acting in ``tenant`` when the request named one (``X-Roadmap-Tenant``),
+        or ``None`` for every kind of no — a user token with no tenant named, or one its user holds no grant on, or
+        a tenant token naming a tenant other than its own, included.
 
         Looked up by its hash, then compared with ``hmac.compare_digest``: the
         lookup is on a value the caller cannot choose (a SHA-256 of 256 random
         bits), and the comparison keeps the equality check itself constant-time.
         """
         if not secret or len(secret) > MAX_TOKEN_LEN or not secret.startswith(TOKEN_PREFIX):
+            return None
+        if tenant is not None and not TENANT_RE.match(tenant):
             return None
         digest = _hash(secret)
         with closing(self._connect()) as conn:
@@ -391,8 +532,12 @@ class Registry:
                 " JOIN tenants n ON n.id = t.tenant WHERE t.hash = ?",
                 (digest,),
             ).fetchone()
-            if row is None or not hmac.compare_digest(row["hash"], digest):
+            if row is None:
+                return self._authenticate_user(conn, digest, tenant)
+            if not hmac.compare_digest(row["hash"], digest):
                 return None
+            if tenant is not None and tenant != row["tenant"]:
+                return None                   # a tenant token naming another tenant: refused, never re-pointed
             if row["revoked_at"] or row["tenant_disabled_at"]:
                 return None
             expires = _parse(row["expires_at"])
@@ -403,6 +548,34 @@ class Registry:
                              (_iso(_now()), row["id"]))
         return Principal(tenant=row["tenant"], token_id=row["id"],
                          scopes=frozenset(json.loads(row["scopes"])), label=row["label"])
+
+    def _authenticate_user(self, conn: sqlite3.Connection, digest: str,
+                           tenant: str | None) -> Principal | None:
+        row = conn.execute(
+            "SELECT k.*, u.disabled_at AS user_disabled_at FROM user_tokens k"
+            " JOIN users u ON u.id = k.user WHERE k.hash = ?",
+            (digest,),
+        ).fetchone()
+        if row is None or not hmac.compare_digest(row["hash"], digest):
+            return None
+        if row["revoked_at"] or row["user_disabled_at"] or tenant is None:
+            return None
+        expires = _parse(row["expires_at"])
+        if expires is not None and expires <= _now():
+            return None
+        grant = conn.execute(
+            "SELECT g.scopes FROM grants g JOIN tenants n ON n.id = g.tenant"
+            " WHERE g.user = ? AND g.tenant = ? AND n.disabled_at IS NULL",
+            (row["user"], tenant),
+        ).fetchone()
+        if grant is None:
+            return None
+        scopes = frozenset(json.loads(row["scopes"])) & frozenset(json.loads(grant["scopes"]))
+        if not scopes:
+            return None
+        if self._should_touch(row["id"]):
+            conn.execute("UPDATE user_tokens SET last_used_at = ? WHERE id = ?", (_iso(_now()), row["id"]))
+        return Principal(tenant=tenant, token_id=row["id"], scopes=scopes, label=row["label"], user=row["user"])
 
     def _should_touch(self, token_id: str) -> bool:
         now = time.monotonic()
@@ -861,9 +1034,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _authenticate(self) -> Principal:
         scheme, _, secret = (self.headers.get("Authorization") or "").partition(" ")
+        named = (self.headers.get(TENANT_HEADER) or "").strip() or None
         principal = None
         if scheme.lower() == "bearer":
-            principal = self.server.registry.authenticate(secret.strip())
+            principal = self.server.registry.authenticate(secret.strip(), named)
         if principal is None:
             wait = self.server.auth_failures.take(self.client_address[0])
             if wait:
@@ -1063,10 +1237,44 @@ def _cmd_tenant(args: Any) -> int:
     return 0
 
 
+def _cmd_user(args: Any) -> int:
+    reg = Registry(args.data)
+    try:
+        if args.user_command == "add":
+            reg.add_user(args.user, label=args.label)
+            print(f"user {args.user} added — grant it tenants with `user grant`, then `token create --user {args.user}`")
+        elif args.user_command == "list":
+            rows = reg.users()
+            for r in rows:
+                r["grants"] = " ".join(f"{t}:{','.join(sc)}" for t, sc in r["grants"].items()) or "-"
+            _print_rows(rows, ("id", "label", "grants", "created_at", "disabled_at"))
+        elif args.user_command == "grant":
+            reg.grant(args.user, args.tenant, args.scopes.split(","))
+            print(f"user {args.user} holds {args.scopes} on tenant {args.tenant}")
+        elif args.user_command == "revoke-grant":
+            print("revoked" if reg.revoke_grant(args.user, args.tenant) else "no such grant")
+        elif args.user_command == "disable":
+            print("disabled" if reg.disable_user(args.user) else "no such enabled user")
+        elif args.user_command == "enable":
+            print("enabled" if reg.enable_user(args.user) else "no such user")
+    except RegistryError as exc:
+        raise SystemExit(f"roadmap serve user: {exc}") from exc
+    return 0
+
+
 def _cmd_token(args: Any) -> int:
     reg = Registry(args.data)
     try:
-        if args.token_command == "create":
+        if args.token_command == "create" and args.user:
+            token_id, secret = reg.create_user_token(
+                args.user, label=args.label, scopes=args.scopes.split(","), expires_days=args.expires_days)
+            print(f"token {token_id} for user {args.user} (at most {args.scopes}, on each tenant it holds a grant on;"
+                  f" a request names its tenant in {TENANT_HEADER}, the CLI from ROADMAP_TENANT)")
+            print("store it now — the server keeps only its hash, and it will not be shown again:")
+            print(secret)
+        elif args.token_command == "create":
+            if not args.tenant:
+                raise RegistryError("name --tenant (a tenant token) or --user (a user token)")
             token_id, secret = reg.create_token(
                 args.tenant, label=args.label, scopes=args.scopes.split(","),
                 expires_days=args.expires_days)
@@ -1077,7 +1285,7 @@ def _cmd_token(args: Any) -> int:
             rows = reg.tokens(args.tenant)
             for r in rows:
                 r["scopes"] = ",".join(r["scopes"])
-            _print_rows(rows, ("id", "tenant", "label", "scopes", "created_at", "expires_at",
+            _print_rows(rows, ("id", "tenant", "user", "label", "scopes", "created_at", "expires_at",
                                "revoked_at", "last_used_at"))
         elif args.token_command == "revoke":
             print("revoked" if reg.revoke_token(args.token_id) else "no such live token")
@@ -1117,7 +1325,9 @@ def add_parser(sub: Any) -> None:
     token = ssub.add_parser("token", help="create, list or revoke a tenant's tokens")
     ksub = token.add_subparsers(dest="token_command", required=True)
     create = ksub.add_parser("create", help="mint a token; it is printed once")
-    create.add_argument("--tenant", required=True)
+    who = create.add_mutually_exclusive_group(required=True)
+    who.add_argument("--tenant", help="a tenant token: bound to this tenant alone")
+    who.add_argument("--user", help="a user token: every tenant the user holds a grant on, named per request")
     create.add_argument("--label", required=True, help="who holds it, e.g. 'wren (ceo)'")
     create.add_argument("--scopes", default=",".join(DEFAULT_SCOPES),
                         help=f"comma-separated, from {', '.join(SCOPES)} (default: read,write)")
@@ -1125,3 +1335,21 @@ def add_parser(sub: Any) -> None:
     ksub.add_parser("list").add_argument("--tenant", default=None)
     ksub.add_parser("revoke").add_argument("token_id")
     token.set_defaults(func=_cmd_token)
+
+    user = ssub.add_parser("user", help="add, list, grant, disable or enable a person who works across tenants")
+    usub = user.add_subparsers(dest="user_command", required=True)
+    ua = usub.add_parser("add")
+    ua.add_argument("user")
+    ua.add_argument("--label", required=True, help="who it is, e.g. 'gal (operator)'")
+    usub.add_parser("list")
+    ug = usub.add_parser("grant", help="give the user scopes on a tenant; a second grant replaces the first")
+    ug.add_argument("user")
+    ug.add_argument("--tenant", required=True)
+    ug.add_argument("--scopes", default=",".join(DEFAULT_SCOPES),
+                    help=f"comma-separated, from {', '.join(SCOPES)} (default: read,write)")
+    ur = usub.add_parser("revoke-grant")
+    ur.add_argument("user")
+    ur.add_argument("--tenant", required=True)
+    for name in ("disable", "enable"):
+        usub.add_parser(name).add_argument("user")
+    user.set_defaults(func=_cmd_user)
