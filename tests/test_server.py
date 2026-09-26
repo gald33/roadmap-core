@@ -500,10 +500,17 @@ def test_a_request_line_cannot_forge_a_log_line(served, caplog):
     assert "\\x1b" in text
 
 
-# --- user tokens (0.5.0) ---------------------------------------------------------------------------------------------
+# --- user tokens (0.5.0)
+# ---------------------------------------------------------------------------------------------
 
-def _person(srv, user="gal", grants=(("org-core", ("read", "write")), ("lucille", ("read", "write"))),
-            scopes=("read", "write")) -> str:
+def _t(tenant: str) -> dict[str, str]:
+    return {"X-Roadmap-Tenant": tenant}
+
+
+RW = ("read", "write")
+
+
+def _person(srv, user="gal", grants=(("org-core", RW), ("lucille", RW)), scopes=RW) -> str:
     for t, _ in grants:
         if t not in {x["id"] for x in srv.registry.tenants()}:
             srv.registry.add_tenant(t)
@@ -514,45 +521,47 @@ def _person(srv, user="gal", grants=(("org-core", ("read", "write")), ("lucille"
 
 
 def test_one_user_token_reaches_each_granted_tenant_by_name_and_no_other(served):
-    """The operator, 2026-09-26: "we don't need token per org. we need token per user … that should be resolved from
-    the token". One secret, and the request names the tenant. Broken looks like: the token reaching a tenant with no
-    grant, or one tenant's items answering under another's name."""
+    """The operator, 2026-09-26: "we don't need token per org. we need token per user … that
+    should be resolved from the token". One secret, and the request names the tenant. Broken
+    looks like: the token reaching a tenant with no grant, or one tenant's items answering
+    under another's name."""
     srv, base = served, served.base
     tok = _person(srv)
-    srv.registry.add_tenant("numerotech")                                  # exists, and no grant on it
+    srv.registry.add_tenant("numerotech")               # exists, and no grant on it
     for t in ("org-core", "lucille"):
         code, _, _ = call(base, "PUT", f"/admin/roadmap/{t}-item", tok, item(f"{t}-item"),
                           headers={"X-Roadmap-Tenant": t})
         assert code == 200, (t, code)
-    code, body, _ = call(base, "GET", "/admin/roadmap", tok, headers={"X-Roadmap-Tenant": "org-core"})
+    code, body, _ = call(base, "GET", "/admin/roadmap", tok, headers=_t("org-core"))
     assert code == 200 and {i["key"] for i in body["items"]} == {"org-core-item"}
-    code, body, _ = call(base, "GET", "/admin/roadmap", tok, headers={"X-Roadmap-Tenant": "lucille"})
+    code, body, _ = call(base, "GET", "/admin/roadmap", tok, headers=_t("lucille"))
     assert code == 200 and {i["key"] for i in body["items"]} == {"lucille-item"}
-    for headers in ({"X-Roadmap-Tenant": "numerotech"}, {"X-Roadmap-Tenant": "no-such"}, {},
-                    {"X-Roadmap-Tenant": "../org-core"}):
+    for headers in (_t("numerotech"), _t("no-such"), {}, _t("../org-core")):
         code, _, _ = call(base, "GET", "/admin/roadmap", tok, headers=headers)
-        assert code == 401, headers                                        # the same no as a bad token
+        assert code == 401, headers                     # the same no as a bad token
 
 
 def test_a_user_tokens_scopes_are_its_cap_meeting_the_grant(served):
     srv, base = served, served.base
-    tok = _person(srv, grants=(("org-core", ("read", "write")), ("lucille", ("read",))), scopes=("read", "write"))
+    tok = _person(srv, grants=(("org-core", RW), ("lucille", ("read",))))
     h = {"X-Roadmap-Tenant": "lucille"}
     assert call(base, "GET", "/admin/roadmap", tok, headers=h)[0] == 200
-    assert call(base, "PUT", "/admin/roadmap/x", tok, item("x"), headers=h)[0] == 403    # the grant is read
+    # the grant is read
+    assert call(base, "PUT", "/admin/roadmap/x", tok, item("x"), headers=h)[0] == 403
     reader = srv.registry.create_user_token("gal", label="fleet reader", scopes=("read",))[1]
     h = {"X-Roadmap-Tenant": "org-core"}
     assert call(base, "GET", "/admin/roadmap", reader, headers=h)[0] == 200
-    assert call(base, "PUT", "/admin/roadmap/x", reader, item("x"), headers=h)[0] == 403  # the token is read
+    # the token is read
+    assert call(base, "PUT", "/admin/roadmap/x", reader, item("x"), headers=h)[0] == 403
 
 
 def test_a_tenant_token_naming_another_tenant_is_refused_never_repointed(served):
     srv, base = served, served.base
     a = tenant(srv, "org-core")
     tenant(srv, "lucille")
-    assert call(base, "GET", "/admin/roadmap", a, headers={"X-Roadmap-Tenant": "org-core"})[0] == 200
-    assert call(base, "GET", "/admin/roadmap", a, headers={"X-Roadmap-Tenant": "lucille"})[0] == 401
-    assert call(base, "GET", "/admin/roadmap", a)[0] == 200                # unchanged without the header
+    assert call(base, "GET", "/admin/roadmap", a, headers=_t("org-core"))[0] == 200
+    assert call(base, "GET", "/admin/roadmap", a, headers=_t("lucille"))[0] == 401
+    assert call(base, "GET", "/admin/roadmap", a)[0] == 200    # unchanged without the header
 
 
 def test_revoking_disabling_and_ungranting_each_close_the_door(served):
@@ -562,23 +571,24 @@ def test_revoking_disabling_and_ungranting_each_close_the_door(served):
     assert call(base, "GET", "/admin/roadmap", tok, headers=h)[0] == 200
     srv.registry.revoke_grant("gal", "lucille")
     assert call(base, "GET", "/admin/roadmap", tok, headers=h)[0] == 401
-    assert call(base, "GET", "/admin/roadmap", tok, headers={"X-Roadmap-Tenant": "org-core"})[0] == 200
+    assert call(base, "GET", "/admin/roadmap", tok, headers=_t("org-core"))[0] == 200
     srv.registry.disable_tenant("org-core")
-    assert call(base, "GET", "/admin/roadmap", tok, headers={"X-Roadmap-Tenant": "org-core"})[0] == 401
+    assert call(base, "GET", "/admin/roadmap", tok, headers=_t("org-core"))[0] == 401
     srv.registry.enable_tenant("org-core")
     srv.registry.disable_user("gal")
-    assert call(base, "GET", "/admin/roadmap", tok, headers={"X-Roadmap-Tenant": "org-core"})[0] == 401
+    assert call(base, "GET", "/admin/roadmap", tok, headers=_t("org-core"))[0] == 401
     srv.registry.enable_user("gal")
     tid = [t["id"] for t in srv.registry.tokens() if t["user"] == "gal"][0]
     assert tid.startswith("utk_") and srv.registry.revoke_token(tid)
-    assert call(base, "GET", "/admin/roadmap", tok, headers={"X-Roadmap-Tenant": "org-core"})[0] == 401
+    assert call(base, "GET", "/admin/roadmap", tok, headers=_t("org-core"))[0] == 401
 
 
 def test_the_cli_names_its_tenant_from_the_environment(served, monkeypatch):
     from roadmap_core import cli
     srv, base = served, served.base
     tok = _person(srv)
-    call(base, "PUT", "/admin/roadmap/lucille-item", tok, item("lucille-item"), headers={"X-Roadmap-Tenant": "lucille"})
+    call(base, "PUT", "/admin/roadmap/lucille-item", tok, item("lucille-item"),
+         headers=_t("lucille"))
     monkeypatch.setenv("ROADMAP_API_URL", base)
     monkeypatch.setenv("ROADMAP_API_TOKEN", tok)
     monkeypatch.setenv("ROADMAP_TENANT", "lucille")
@@ -594,7 +604,8 @@ def test_users_and_grants_are_managed_on_the_host(tmp_path, capsys):
     for argv in (["tenant", "add", "org-core"], ["user", "add", "gal", "--label", "gal (operator)"],
                  ["user", "grant", "gal", "--tenant", "org-core", "--scopes", "read"]):
         assert cli.main(["serve", "--data", data, *argv]) == 0
-    assert cli.main(["serve", "--data", data, "token", "create", "--user", "gal", "--label", "g"]) == 0
+    argv = ["serve", "--data", data, "token", "create", "--user", "gal", "--label", "g"]
+    assert cli.main(argv) == 0
     out = capsys.readouterr().out
     assert "for user gal" in out and out.strip().splitlines()[-1].startswith("rmk_")
     assert cli.main(["serve", "--data", data, "user", "list"]) == 0

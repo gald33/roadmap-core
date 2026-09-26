@@ -722,8 +722,9 @@ def _api(method: str, path: str, payload: dict | None = None) -> Any:
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            # a user token acts in the tenant the request names (0.5.0); a tenant token may name its own
-            **({"X-Roadmap-Tenant": tenant} if (tenant := os.environ.get("ROADMAP_TENANT", "").strip()) else {}),
+            # a user token acts in the tenant the request names (0.5.0); a tenant token may name its
+            # own
+            **({"X-Roadmap-Tenant": tenant} if (tenant := _api_tenant()) else {}),
         },
     )
     try:
@@ -732,11 +733,17 @@ def _api(method: str, path: str, payload: dict | None = None) -> Any:
             return json.loads(body) if body else None
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode()[:400]
-        hint = ("\n(a user token acts only in the tenant a request names: set ROADMAP_TENANT to this repo's tenant)"
-                if exc.code == 401 and not os.environ.get("ROADMAP_TENANT", "").strip() else "")
+        hint = ("\n(a user token acts only in the tenant a request names: "
+                "set ROADMAP_TENANT to this repo's tenant)"
+                if exc.code == 401 and not _api_tenant() else "")
         raise SystemExit(f"{method} {path} -> HTTP {exc.code}: {detail}{hint}") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(f"{method} {path} failed: {exc.reason}") from exc
+
+
+def _api_tenant() -> str:
+    """The tenant a request names (``X-Roadmap-Tenant``): what a user token acts in (0.5.0)."""
+    return os.environ.get("ROADMAP_TENANT", "").strip()
 
 
 def _api_token() -> str:
