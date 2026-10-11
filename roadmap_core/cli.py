@@ -47,7 +47,9 @@ it, because ``done`` is the one status the graph cannot re-derive.
 ``priority`` is NOT a state field. It is a judgement about what matters, so it is
 authored in YAML, reviewed in a diff and uploaded by ``push`` — the same row of
 the table as ``blocked_on`` and ``defer_reason``. It is the sort key ``ready``,
-``list`` and the generated markdown all order by, ahead of the item key.
+``list`` and the generated markdown all order by, ahead of the item key. One of
+``now``, ``next``, ``later`` or ``vision``; ``vision`` sorts last and is never
+startable (``graph.VISION``).
 """
 
 from __future__ import annotations
@@ -1902,8 +1904,8 @@ def cmd_show(args: argparse.Namespace) -> int:
         held = "" if age is None else f" ({age:.1f}d ago)"
         stale = "" if age is None or age < graph.STALE_CLAIM_DAYS else "  ⚠️ likely stale"
         print(f"claimed: {item['claimed_by']} at {item.get('claimed_at')}{held}{stale}")
-    if (item.get("defer_reason") or "").strip():
-        print(f"deferred: {' '.join(item['defer_reason'].split())}")
+    if graph.deferral_reason(item):
+        print(f"deferred: {graph.deferral_reason(item)}")
     for dep in item.get("blocked_on") or []:
         mark = "done" if by_key.get(dep, {}).get("status") == "done" else "OPEN"
         title = by_key[dep]["title"] if dep in by_key else "??? unknown item"

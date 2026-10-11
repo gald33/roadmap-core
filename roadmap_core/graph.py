@@ -69,13 +69,33 @@ _UUID_RE = re.compile(
 #: from the queue entirely and owes the next reader a reason. ``later`` keeps it
 #: in the queue, at the bottom. "Not the thing to start, and here is why" is a
 #: deferral; "startable, just not first" is ``later``.
-PRIORITIES = ("now", "next", "later")
+#:
+#: ``vision`` is the fourth, added for org-core's item plots, which draw a
+#: ``vision`` band that no item could enter (the operator, 2026-10-10: "a
+#: 'vision' category, together with empty"). It is a direction, not a piece of
+#: work: it ranks after ``later`` and is never startable — see ``VISION``.
+PRIORITIES = ("now", "next", "later", "vision")
+
+#: The priority that withholds an item from the queue by itself. A vision item
+#: names where things are going, not a change a session can ship and verify, so
+#: ``derive_status`` reads it as ``deferred`` with ``VISION_DEFERRAL`` as the
+#: reason. Offering it at the bottom of ``ready`` instead would hand it to the
+#: one session that has drained everything else — the session least likely to
+#: have been told what the direction means. To make it startable, break it into
+#: work items, or give it ``now``/``next``/``later``.
+VISION = "vision"
+VISION_DEFERRAL = (
+    "priority `vision` — a direction, not a work item. Break it into items, or "
+    "give it now/next/later, to make it startable."
+)
 
 #: Where each priority sorts. ``None`` sits between ``next`` and ``later`` on
 #: purpose: an item somebody explicitly pushed down ranks BELOW one nobody has
 #: looked at yet. Putting unjudged items last would mean stating a preference
-#: for three items silently buried the other forty-five.
-_PRIORITY_RANK: dict[str | None, int] = {"now": 0, "next": 1, None: 2, "later": 3}
+#: for three items silently buried the other forty-five. ``vision`` is last.
+_PRIORITY_RANK: dict[str | None, int] = {
+    "now": 0, "next": 1, None: 2, "later": 3, VISION: 4,
+}
 
 #: An unrecognised value ranks with the unjudged rather than crashing the queue.
 #: ``validate_graph`` is what complains about it; a typo in one item must not
@@ -496,6 +516,10 @@ def derive_status(item: dict[str, Any], by_key: dict[str, dict[str, Any]]) -> st
       start yet. Reporting the softer reason would hide the harder one.
     * ``deferred`` before ``ready`` — the whole point is that it stops being
       offered. A deferral that still read as ``ready`` would change nothing.
+    * a ``vision`` priority derives ``deferred`` exactly as a ``defer_reason``
+      does — see ``VISION``. Through the derived status rather than a filter
+      on ``ready_items``, so ``list``, ``ROADMAP.md`` and the API's ``status``
+      agree with ``ready`` instead of showing a "ready" item ``ready`` omits.
 
     Note a claim beats a deferral deliberately: if a session went and took a
     deferred item anyway, the queue must report what is true, not re-assert the
@@ -509,9 +533,23 @@ def derive_status(item: dict[str, Any], by_key: dict[str, dict[str, Any]]) -> st
         return "claimed"
     if unmet_deps(item, by_key):
         return "blocked"
-    if (item.get("defer_reason") or "").strip():
+    if deferral_reason(item):
         return "deferred"
     return "ready"
+
+
+def deferral_reason(item: dict[str, Any]) -> str | None:
+    """Why this item is withheld from the queue, or ``None`` when it is not.
+
+    A stated ``defer_reason`` wins; a ``vision`` priority without one gets
+    ``VISION_DEFERRAL``, so no deferred item ever renders with a blank reason.
+    """
+    reason = " ".join((item.get("defer_reason") or "").split())
+    if reason:
+        return reason
+    if priority_of(item) == VISION:
+        return VISION_DEFERRAL
+    return None
 
 
 def priority_of(item: dict[str, Any]) -> str | None:
@@ -795,7 +833,7 @@ def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
         )
         add("")
         for item in deferred:
-            reason = " ".join((item.get("defer_reason") or "").split())
+            reason = deferral_reason(item) or ""
             add(f"- **`{item['key']}`** — {item['title']}  \n  deferred: {reason}")
     add("")
 
@@ -904,8 +942,8 @@ def render_markdown(by_key: dict[str, dict[str, Any]]) -> str:
             add(f"- **claimed by:** {item['claimed_by']} (since {since})")
         if item.get("blocked_on"):
             add(f"- **blocked on:** {', '.join(f'`{d}`' for d in item['blocked_on'])}")
-        if (item.get("defer_reason") or "").strip():
-            add(f"- **deferred:** {' '.join(item['defer_reason'].split())}")
+        if deferral_reason(item):
+            add(f"- **deferred:** {deferral_reason(item)}")
         blocks = sorted(
             k for k, other in by_key.items() if key in (other.get("blocked_on") or [])
         )
