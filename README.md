@@ -83,6 +83,12 @@ roadmap release first-thing
 The store is one SQLite file at `roadmap/roadmap.db`. There is nothing to
 provision and no migration to run: it is created on first open.
 
+An item may carry a `priority:` — `now`, `next`, `later` or `vision` (0.6.0),
+or nothing, which means nobody has judged it yet and sorts between `next` and
+`later`. `vision` sorts last and is **never startable**: it names a direction,
+not a piece of work, so it reads as `deferred` (with that reason) until it is
+broken into items or given `now`/`next`/`later`.
+
 ### When something is off, ask
 
 ```bash
