@@ -777,6 +777,10 @@ def _put_item(req: _Request) -> tuple[int, Any]:
     for name in _ITEM_LISTS:
         if not isinstance(body.get(name) or [], list):
             raise _HttpError(400, f"{name} must be a list")
+    try:
+        graph.normalize_acceptance(body.get("acceptance"))
+    except TypeError as exc:
+        raise _HttpError(400, str(exc)) from exc
     if any(not isinstance(d, str) for d in body.get("blocked_on") or []):
         raise _HttpError(400, "blocked_on holds item keys")
     status = body.get("status") or "ready"
