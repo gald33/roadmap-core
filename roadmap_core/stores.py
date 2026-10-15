@@ -38,7 +38,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Callable, Protocol
 
-from . import store
+from . import graph, store
 from .graph import derive_status
 
 __all__ = [
@@ -155,6 +155,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
         "done_version": json_col("done_version", None),
         "evidence": row["evidence"] or "",
         "evidence_checked_at": row["evidence_checked_at"],
+        "acceptance": json_col("acceptance", None),
     }
 
 
@@ -263,6 +264,13 @@ class LocalStore:
             "evidence": item.get("evidence") or "",
             "updated_at": now,
         }
+        # Present-or-absent matters here, unlike the fields above. `push` is a
+        # full PUT, so a client that predates this field sends no key at all, and
+        # reading that as "clear it" would let every un-upgraded checkout erase
+        # what an upgraded one filed. An explicit null still clears.
+        if "acceptance" in item:
+            accepted = graph.normalize_acceptance(item["acceptance"])
+            payload["acceptance"] = None if accepted is None else store.dumps(accepted)
 
         if existing is None:
             if key in self.pruned_keys():

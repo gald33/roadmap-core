@@ -455,6 +455,10 @@ def load_from_files() -> dict[str, dict[str, Any]]:
         if not _ID_RE.match(key):
             raise SystemExit(f"{path}: id {key!r} is not kebab-case")
         claim = raw.get("claim") or {}
+        try:
+            acceptance = graph.normalize_acceptance(raw.get("acceptance"))
+        except TypeError as exc:
+            raise SystemExit(f"{path}: {exc}") from exc
         by_key[key] = {
             "key": key,
             "title": str(raw.get("title") or ""),
@@ -471,6 +475,7 @@ def load_from_files() -> dict[str, dict[str, Any]]:
             "tickets": [str(t) for t in (raw.get("tickets") or [])],
             "evidence": raw.get("evidence") or "",
             "evidence_checked_at": raw.get("evidence_checked_at"),
+            "acceptance": acceptance,
         }
     return by_key
 
@@ -647,6 +652,58 @@ def write_claim_to_file(key: str, claim: dict[str, Any] | None) -> bool:
     return True
 
 
+def _acceptance_block(value: Any) -> list[str]:
+    """The `acceptance:` lines, in the shape the item was authored in.
+
+    A string comes back as a block scalar and a list as a list, because both are
+    in the wild (see ``graph.normalize_acceptance``) and a pull that turned one
+    into the other would show up as a rewrite in a diff nobody asked for. Empty
+    when there is nothing to write, so a store with no criteria adds no key.
+
+    The block scalar carries its chomping indicator, so a string with no trailing
+    newline does not gain one on the way through. Lines are right-stripped, as
+    ``evidence`` is: trailing whitespace is not worth a quoted scalar.
+    """
+    try:
+        value = graph.normalize_acceptance(value)
+    except TypeError:
+        return []
+    if value is None:
+        return []
+    if isinstance(value, list):
+        out = ["acceptance:"]
+        for entry in value:
+            if "\n" not in entry and entry.isprintable():
+                out.append(f"- {_yaml_scalar(entry)}")
+            else:  # a quoted scalar is the one form that holds a newline exactly
+                out.append(f"- {json.dumps(entry, ensure_ascii=False)}")
+        return out
+    if not all(ch.isprintable() or ch == "\n" for ch in value):
+        return [f"acceptance: {json.dumps(value, ensure_ascii=False)}"]
+    body = value.split("\n")
+    if value.endswith("\n"):
+        body = body[:-1]
+        chomp = "" if not value.endswith("\n\n") else "+"
+    else:
+        chomp = "-"
+    # A first line that starts with a space (or an empty one) would make the
+    # parser guess the block's indentation from it; say it is 2.
+    indent = "2" if value[:1] in (" ", "\n") else ""
+    return [f"acceptance: |{indent}{chomp}"] + [
+        f"  {ln.rstrip()}".rstrip() for ln in body
+    ]
+
+
+def _acceptance_or_none(item: dict[str, Any]) -> str | list[str] | None:
+    """The item's acceptance, or None -- including for a value the store holds in
+    a shape this version does not understand. A pull must read past that, not die
+    on it: it is the command that repairs the checkout."""
+    try:
+        return graph.normalize_acceptance(item.get("acceptance"))
+    except TypeError:
+        return None
+
+
 def render_item_yaml(item: dict[str, Any]) -> str:
     """Emit a full item file, for an item that exists only in the DB."""
     lines = [
@@ -696,6 +753,7 @@ def render_item_yaml(item: dict[str, Any]) -> str:
     if tickets:
         lines.append("tickets:")
         lines += [f"- {_yaml_scalar(t)}" for t in tickets]
+    lines += _acceptance_block(item.get("acceptance"))
     evidence = (item.get("evidence") or "").rstrip()
     if evidence:
         lines.append("evidence: |")
@@ -923,6 +981,10 @@ def cmd_push(args: argparse.Namespace) -> int:
             "refs": item["refs"],
             "tickets": item.get("tickets") or [],
             "evidence": item["evidence"],
+            # Sent even when None: an explicit null is how a file that has
+            # dropped its criteria says so. A client that omits the key says
+            # nothing, and the store leaves what it holds.
+            "acceptance": item.get("acceptance"),
         }
         try:
             if local is not None:
@@ -1252,7 +1314,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
     source = getattr(args, "source", "db")
     db = load(source)
     files = load_from_files()
-    created, updated = [], []
+    created, updated, filled = [], [], []
     projected: dict[str, str] = {}
     ITEMS_DIR.mkdir(parents=True, exist_ok=True)
     for key in sorted(db):
@@ -1305,6 +1367,32 @@ def cmd_pull(args: argparse.Namespace) -> int:
             )
             path.write_text(_replace_top_level_key(path.read_text(), "priority", block))
             changed = True
+        # Acceptance criteria: ADD what the store has and the file lacks; never
+        # remove, and never overwrite. The file is the authored form (as with
+        # evidence), and the first sync after an upgrade runs against a store
+        # whose rows all predate the field -- a pull that treated "the store has
+        # none" as "so should the file" would erase every criteria block in the
+        # checkout in one hourly run. Only the push-filed case needs this: an
+        # item that reached the store without a file never had its criteria
+        # written anywhere a checkout could read them.
+        db_acceptance = _acceptance_or_none(item)
+        if db_acceptance is not None and _acceptance_or_none(local) is None:
+            path = item_path(key)
+            block = _acceptance_block(db_acceptance)
+            text = path.read_text()
+            if re.search(r"^acceptance:", text, re.MULTILINE):
+                # present but empty (`acceptance:` and nothing after): replace, so
+                # the file does not end up with the key twice
+                text = _replace_top_level_key(text, "acceptance", block)
+            else:
+                # appended, not inserted: a top-level key at column 0 ends
+                # whatever block scalar precedes it, and the criteria then follow
+                # the evidence the way they do in the files people write by hand
+                text = text if text.endswith("\n") else text + "\n"
+                text += "\n".join(block) + "\n"
+            path.write_text(text)
+            filled.append(key)
+            changed = True
         if changed:
             updated.append(key)
     # Arcs, same direction and same reason: an arc that exists only in the store
@@ -1346,6 +1434,8 @@ def cmd_pull(args: argparse.Namespace) -> int:
         # moved, and a repair that leaves no trace hides the next regression
         # exactly as this one hid itself.
         note = f" (status: {projected[key]})" if key in projected else ""
+        if key in filled:
+            note += " (acceptance added from the store)"
         print(f"updated roadmap/items/{key}.yaml{note}")
     for key in arcs_created:
         print(f"created roadmap/arcs/{key}.yaml")
@@ -1780,6 +1870,7 @@ def _release_dependents(pruned: list[str]) -> None:
                 "artifacts": fresh["artifacts"],
                 "refs": fresh["refs"], "tickets": fresh.get("tickets") or [],
                 "evidence": fresh["evidence"],
+                "acceptance": fresh.get("acceptance"),
             })
         except SystemExit as exc:
             print(f"  warning: {key} edge dropped in files but not the store ({exc})",

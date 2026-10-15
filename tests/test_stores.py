@@ -36,7 +36,7 @@ from roadmap_core.stores import (
 ITEM_FIELDS = {
     "key", "title", "status", "arc", "priority", "claimed_by", "claimed_at",
     "blocked_on", "defer_reason", "related_to", "artifacts", "refs", "tickets",
-    "done_at", "done_version", "evidence", "evidence_checked_at",
+    "done_at", "done_version", "evidence", "evidence_checked_at", "acceptance",
 }
 
 

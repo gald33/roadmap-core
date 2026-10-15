@@ -75,6 +75,7 @@ SCHEMA: dict[str, str] = {
             refs                TEXT    NOT NULL DEFAULT '[]',
             evidence            TEXT    NOT NULL DEFAULT '',
             evidence_checked_at TEXT,
+            acceptance          TEXT,
             done_at             TEXT,
             done_version        TEXT,
             tickets             TEXT    NOT NULL DEFAULT '[]',
@@ -106,6 +107,16 @@ SCHEMA: dict[str, str] = {
 
 TABLES = tuple(SCHEMA)
 
+#: Columns added after a release first shipped the table, which a file created by
+#: that release does not have. ``CREATE TABLE IF NOT EXISTS`` is a no-op on a
+#: table that exists, so the "create, don't migrate" rule above holds for a NEW
+#: file and not for the served store, which is one file that outlives every
+#: release. Additive only, nullable only: an existing row reads the new column as
+#: unset, which is what it is.
+ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "roadmap_items": {"acceptance": "TEXT"},
+}
+
 #: Indexes the Postgres side declares on the column rather than in DDL. Only
 #: `arc` is indexed there; `key` is covered by its UNIQUE constraint on both
 #: sides, so adding one here would be a second index for the same lookup.
@@ -119,6 +130,7 @@ INDEXES = (
 JSON_COLUMNS: dict[str, tuple[str, ...]] = {
     "roadmap_items": (
         "blocked_on", "related_to", "artifacts", "refs", "done_version", "tickets",
+        "acceptance",
     ),
     "roadmap_arcs": ("refs",),
     "roadmap_prunes": (),
@@ -160,9 +172,26 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     for ddl in SCHEMA.values():
         conn.execute(ddl)
+    _add_missing_columns(conn)
     for ddl in INDEXES:
         conn.execute(ddl)
     return conn
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Bring a store created by an earlier release up to ``ADDED_COLUMNS``."""
+    for table, wanted in ADDED_COLUMNS.items():
+        have = columns(conn, table)
+        for name, decl in wanted.items():
+            if name in have:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")  # noqa: S608
+            except sqlite3.OperationalError:
+                # Two processes opened the same old file at once and the other
+                # one won. Fine if the column is there now; anything else is real.
+                if name not in columns(conn, table):
+                    raise
 
 
 def columns(conn: sqlite3.Connection, table: str) -> dict[str, str]:

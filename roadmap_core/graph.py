@@ -296,6 +296,33 @@ def normalize_artifacts(item: dict[str, Any]) -> list[str]:
     return sorted(seen)
 
 
+def normalize_acceptance(value: Any) -> str | list[str] | None:
+    """An item's ``acceptance`` as authored: prose (str) or a checklist (list of
+    str), or ``None`` for none.
+
+    Both shapes are kept as written and neither is folded into the other. Measured
+    2026-10-15 over Lucille's ``roadmap/items/`` on ``main``: 176 of 309 files
+    carry the key -- a string in 103 and a list of strings in 73. Normalising to
+    one shape would rewrite a third to half of them on the first ``pull``.
+
+    Blank is ``None``, so "no criteria" has one spelling in a store. Anything else
+    (a mapping, a number, a list with a non-string in it) raises ``TypeError``:
+    the callers differ in how they surface that -- the server answers 400, the
+    file loader names the file -- but none of them may store it, because a field
+    that round-trips as a different type is worse than one that is refused.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value.strip() else None
+    if isinstance(value, list):
+        if any(not isinstance(entry, str) for entry in value):
+            raise TypeError("acceptance entries must be strings")
+        kept = [entry for entry in value if entry.strip()]
+        return kept or None
+    raise TypeError("acceptance must be a string or a list of strings")
+
+
 def artifact_contention(
     key: str, by_key: dict[str, dict[str, Any]]
 ) -> list[dict[str, Any]]:
