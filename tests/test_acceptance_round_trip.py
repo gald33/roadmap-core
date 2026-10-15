@@ -353,3 +353,51 @@ def test_many_openers_of_one_old_file_all_succeed(tmp_path):
         for t in threads:
             t.join()
     assert not failures, f"{len(failures)} of 80 concurrent opens failed: {failures[:2]}"
+
+
+# --- follow-ups from review of #23 -------------------------------------------
+
+
+def test_the_loader_and_validate_reject_a_file_with_a_repeated_top_level_key(checkout):
+    """A branch pushes acceptance for an item already on main; the main sync
+    appends the store's copy; a clean git merge leaves BOTH. PyYAML keeps the
+    last, which can be the store's stale one, and says nothing."""
+    path = _write(checkout, "alpha", "the branch's criteria\n")
+    path.write_text(path.read_text() + "acceptance: |\n  the stale store copy\n")
+    assert yaml.safe_load(path.read_text())["acceptance"] == "the stale store copy\n", (
+        "premise: PyYAML really does take the later one without complaint")
+
+    with pytest.raises(SystemExit) as loaded:
+        cli.load_from_files()
+    message = str(loaded.value)
+    assert "alpha.yaml" in message and "'acceptance'" in message and "duplicate" in message
+
+    with pytest.raises(SystemExit, match="duplicate top-level key"):
+        cli.cmd_validate(argparse.Namespace(source="files"))
+
+
+def test_a_nested_repeat_is_not_this_checks_business(checkout):
+    """Top level only: a `related_to` list repeats `key:` once per entry, each in
+    its own mapping, and that is not a duplicate."""
+    (checkout / "alpha.yaml").write_text(
+        "id: alpha\ntitle: alpha\nstatus: ready\nrelated_to:\n- key: a\n- key: b\n"
+        "evidence: |\n  e\n")
+    assert "alpha" in cli.load_from_files()
+
+
+def test_a_prunes_repair_put_is_silent_for_a_file_without_the_key(served, checkout):
+    """The silent-file rule (a file with no `acceptance` key must not clear the
+    store's) holds in `push` and, separately, in the prune repair PUT, which
+    builds its own payload by hand."""
+    _write(checkout, "dep")
+    path = _write(checkout, "alpha", PROSE, blocked_on=["dep"])
+    _push()
+    doc = yaml.safe_load(path.read_text())
+    del doc["acceptance"]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    (checkout / "dep.yaml").unlink()
+
+    cli._release_dependents(["dep"])
+
+    assert "acceptance" not in yaml.safe_load(path.read_text())
+    assert cli.load_from_db()["alpha"]["acceptance"] == PROSE
