@@ -424,6 +424,27 @@ def _truncated_refs(text: str) -> list[str]:
     return bad
 
 
+def _duplicate_top_level_keys(yaml: Any, text: str) -> list[str]:
+    """Top-level keys that appear more than once, in first-repeat order.
+
+    Read from the composed node tree, because by the time ``safe_load`` returns a
+    dict the earlier value is already gone. Top level only: a repeated key in a
+    nested mapping is a different file to judge, and this is the merge-leftover
+    shape, which is always at column 0.
+    """
+    root = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(root, yaml.MappingNode):
+        return []
+    seen: set[Any] = set()
+    dupes: list[str] = []
+    for key_node, _ in root.value:
+        name = key_node.value
+        if name in seen and name not in dupes:
+            dupes.append(name)
+        seen.add(name)
+    return dupes
+
+
 def load_from_files() -> dict[str, dict[str, Any]]:
     """Parse ``roadmap/items/*.yaml``. Raises on the first malformed file — a
     half-loaded graph is worse than no graph."""
@@ -444,9 +465,20 @@ def load_from_files() -> dict[str, dict[str, Any]]:
                 + "\nQuote them: - 'PR #861'"
             )
         try:
+            dupes = _duplicate_top_level_keys(yaml, text)
             raw = yaml.safe_load(text) or {}
         except yaml.YAMLError as exc:
             raise SystemExit(f"{path}: invalid YAML: {exc}") from exc
+        if dupes:
+            # PyYAML keeps the LAST of a repeated key without a word. The case
+            # that made this an error: `pull` appends `acceptance:` to a file
+            # that lacks it, a branch adds its own, and a clean git merge leaves
+            # both -- of which the loader would read the later, possibly the
+            # store's stale copy.
+            raise SystemExit(
+                f"{path}: duplicate top-level key(s) {', '.join(repr(k) for k in dupes)} "
+                "-- YAML silently keeps the last one. Keep one, and delete the other"
+            )
         if not isinstance(raw, dict):
             raise SystemExit(f"{path}: expected a mapping at the top level")
         key = str(raw.get("id") or raw.get("key") or "")

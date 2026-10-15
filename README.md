@@ -131,6 +131,17 @@ this rather than by reading the code:
 - **Authoring is writing a YAML file**, not calling an API. `push` is what
   moves it into the store; there is no `roadmap new`. That is deliberate:
   filing an item belongs in a diff somebody reviews.
+- **`acceptance` (0.6.0) is a string or a list of strings, and a file is the
+  authored form.** `push` sends it; `pull` writes it into a file that has none
+  and never removes or overwrites one that has. So **deleting an `acceptance:`
+  block from a file is undone by the next sync**: the store still holds it, and
+  `pull` puts it back. A file with no `acceptance` key says nothing, and the
+  store keeps what it has. To remove the criteria, write `acceptance: null` in
+  the file and push; only that clears the store's copy.
+- **A repeated top-level key is an error** (0.6.1). YAML keeps the last of two
+  `acceptance:` keys without a word, and a clean git merge of a branch's
+  criteria with the sync's appended copy leaves both, so the loader (and so
+  `validate`) refuses the file, naming it and the key.
 
 `ROADMAP_SOURCE=local` selects the SQLite store. Without it the CLI expects the
 API store, which is how Lucille runs it — see `roadmap_core.stores`.
