@@ -21,7 +21,10 @@ with a test rather than imported.
 IF NOT EXISTS`` on first open. Alembic stays a concern of the Postgres path,
 where an existing deployment has rows to preserve; it is not a prerequisite for
 running the tool, because a tool you must run a migration framework to try is
-not one you can adopt in an afternoon.
+not one you can adopt in an afternoon. The one exception is additive: a column
+added after a release shipped (``ADDED_COLUMNS``) is ``ALTER``-ed into an older
+file on open, because the served store is a file that outlives every release.
+Nothing is ever dropped, renamed or rewritten.
 
 Column types follow SQLite's actual storage rather than pretending otherwise:
 UUIDs and timestamps are TEXT (ISO 8601, UTC), and the JSON columns are TEXT

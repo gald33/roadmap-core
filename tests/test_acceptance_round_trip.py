@@ -95,16 +95,44 @@ def test_push_sends_the_acceptance_it_was_filed_with(checkout, monkeypatch):
     assert payload.get("acceptance") == PROSE
 
 
+def test_push_omits_the_key_for_a_file_without_it_so_the_store_keeps_its_own(
+        served, checkout):
+    """The sync pushes from main before it pulls. An item on main without
+    criteria that a branch just pushed with them must not be wiped by that push."""
+    path = _write(checkout, "alpha", PROSE)
+    _push()
+    doc = yaml.safe_load(path.read_text())
+    del doc["acceptance"]
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+    _push()
+
+    assert cli.load_from_db()["alpha"]["acceptance"] == PROSE
+
+
+def test_an_explicit_null_in_the_file_does_clear_the_stored_acceptance(served, checkout):
+    path = _write(checkout, "alpha", PROSE)
+    _push()
+    doc = yaml.safe_load(path.read_text())
+    doc["acceptance"] = None
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+
+    _push()
+
+    assert cli.load_from_db()["alpha"]["acceptance"] is None
+
+
 def test_the_loader_keeps_both_shapes_authored_in_the_wild(checkout):
-    """111 committed Lucille files carry `acceptance`: a string in 60, a list in
-    51. A loader that normalised one into the other would rewrite half of them."""
+    """Measured 2026-10-15 on Lucille `origin/main`: 176 of 309 item files carry
+    `acceptance` -- a string in 103, a list in 73. A loader that normalised one
+    into the other would rewrite a third to a half of them."""
     _write(checkout, "prose", PROSE)
     _write(checkout, "listy", CHECKLIST)
     _write(checkout, "none")
     got = cli.load_from_files()
     assert got["prose"]["acceptance"] == PROSE
     assert got["listy"]["acceptance"] == CHECKLIST
-    assert got["none"]["acceptance"] is None
+    assert "acceptance" not in got["none"], "a file that says nothing stays silent"
 
 
 # --- the store keeps it ----------------------------------------------------
@@ -261,3 +289,67 @@ def test_the_rendered_file_loads_back_to_exactly_what_was_stored(checkout, value
     (checkout / "alpha.yaml").write_text(cli.render_item_yaml(item))
     assert cli.load_from_files()["alpha"]["acceptance"] == value
     assert cli.load_from_files()["alpha"]["evidence"] == "e\n"
+
+
+def _old_store(path):
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE roadmap_items (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, "
+        "title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ready', arc TEXT, "
+        "priority TEXT, claimed_by TEXT, claimed_at TEXT, "
+        "blocked_on TEXT NOT NULL DEFAULT '[]', defer_reason TEXT, "
+        "related_to TEXT NOT NULL DEFAULT '[]', artifacts TEXT NOT NULL DEFAULT '[]', "
+        "refs TEXT NOT NULL DEFAULT '[]', evidence TEXT NOT NULL DEFAULT '', "
+        "evidence_checked_at TEXT, done_at TEXT, done_version TEXT, "
+        "tickets TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, "
+        "updated_at TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_losing_the_race_to_add_the_column_is_not_an_error(tmp_path, monkeypatch):
+    """Deterministic form of the race: this opener read the columns BEFORE another
+    one added `acceptance`, so its ALTER hits "duplicate column name". Without the
+    handler in `_add_missing_columns` that propagates and the open fails."""
+    path = tmp_path / "raced.db"
+    with LocalStore(path):
+        pass                                   # the "winner": column now exists
+    real = store.columns
+    calls: list[str] = []
+
+    def stale_first(conn, table):
+        calls.append(table)
+        got = real(conn, table)
+        if len(calls) == 1:                    # the loser's stale read
+            got = {k: v for k, v in got.items() if k != "acceptance"}
+        return got
+
+    monkeypatch.setattr(store, "columns", stale_first)
+    with LocalStore(path) as local:            # must not raise
+        assert "acceptance" in real(local.connection, "roadmap_items")
+
+
+def test_many_openers_of_one_old_file_all_succeed(tmp_path):
+    """The same race for real. Measured by the reviewer on PR #23 with the handler
+    removed: 244 of 320 concurrent opens failed with 'duplicate column name'."""
+    failures: list[BaseException] = []
+    for round_no in range(5):
+        path = tmp_path / f"old{round_no}.db"
+        _old_store(path)
+        barrier = threading.Barrier(16)
+
+        def opener(path=path, barrier=barrier):
+            try:
+                barrier.wait()
+                with LocalStore(path):
+                    pass
+            except BaseException as exc:  # noqa: BLE001 - the point is to collect them
+                failures.append(exc)
+
+        threads = [threading.Thread(target=opener) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert not failures, f"{len(failures)} of 80 concurrent opens failed: {failures[:2]}"

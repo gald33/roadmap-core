@@ -475,8 +475,12 @@ def load_from_files() -> dict[str, dict[str, Any]]:
             "tickets": [str(t) for t in (raw.get("tickets") or [])],
             "evidence": raw.get("evidence") or "",
             "evidence_checked_at": raw.get("evidence_checked_at"),
-            "acceptance": acceptance,
         }
+        # Present only when the file SAYS something about it (`acceptance:`,
+        # including an explicit null). A file with no such key must stay silent:
+        # `push` omits the key for it, and the store keeps what it holds.
+        if "acceptance" in raw:
+            by_key[key]["acceptance"] = acceptance
     return by_key
 
 
@@ -981,11 +985,13 @@ def cmd_push(args: argparse.Namespace) -> int:
             "refs": item["refs"],
             "tickets": item.get("tickets") or [],
             "evidence": item["evidence"],
-            # Sent even when None: an explicit null is how a file that has
-            # dropped its criteria says so. A client that omits the key says
-            # nothing, and the store leaves what it holds.
-            "acceptance": item.get("acceptance"),
         }
+        # Omitted for a file with no `acceptance` key, so the store keeps what it
+        # holds: the sync pushes from main before it pulls, and a file on main
+        # that lacks the criteria a branch just pushed must not wipe them. Only an
+        # explicit `acceptance: null` in the file is sent as null, and clears.
+        if "acceptance" in item:
+            payload["acceptance"] = item["acceptance"]
         try:
             if local is not None:
                 # The claim goes to the LOCAL store only. Its store is ephemeral
@@ -1861,7 +1867,7 @@ def _release_dependents(pruned: list[str]) -> None:
             # store. `defer_reason` was already being dropped that way — a prune
             # silently un-deferred any item that depended on a pruned one — and
             # `priority` would have joined it.
-            _api("PUT", f"/admin/roadmap/{key}", {
+            body = {
                 "key": key, "title": fresh["title"], "status": fresh["status"],
                 "arc": fresh["arc"], "priority": fresh["priority"],
                 "blocked_on": fresh["blocked_on"],
@@ -1870,8 +1876,10 @@ def _release_dependents(pruned: list[str]) -> None:
                 "artifacts": fresh["artifacts"],
                 "refs": fresh["refs"], "tickets": fresh.get("tickets") or [],
                 "evidence": fresh["evidence"],
-                "acceptance": fresh.get("acceptance"),
-            })
+            }
+            if "acceptance" in fresh:  # same rule as `push`: silent file, silent PUT
+                body["acceptance"] = fresh["acceptance"]
+            _api("PUT", f"/admin/roadmap/{key}", body)
         except SystemExit as exc:
             print(f"  warning: {key} edge dropped in files but not the store ({exc})",
                   file=sys.stderr)
